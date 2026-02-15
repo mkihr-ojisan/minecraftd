@@ -66,7 +66,7 @@ Build artifacts:
 
 ### Install binaries
 
-#### Option A: copy from `target/release` to `~/.local/bin` (recommended for systemd)
+#### Copy from `target/release` to `~/.local/bin` (recommended for systemd)
 
 The systemd user unit below uses `ExecStart=%h/.local/bin/minecraftd`, so install the binaries to `~/.local/bin`:
 
@@ -74,20 +74,6 @@ The systemd user unit below uses `ExecStart=%h/.local/bin/minecraftd`, so instal
 install -Dm755 target/release/minecraftd ~/.local/bin/minecraftd
 install -Dm755 target/release/mcctl ~/.local/bin/mcctl
 ```
-
-#### Option B: `cargo install` (installs to `~/.cargo/bin`)
-
-If you prefer `cargo install`, install the workspace packages directly:
-
-```bash
-cargo install --path minecraftd --bin minecraftd
-cargo install --path mcctl --bin mcctl
-```
-
-If you use this option, either:
-
-- change the systemd unit `ExecStart` to `%h/.cargo/bin/minecraftd`, or
-- copy/symlink the binaries into `~/.local/bin`.
 
 If `~/.local/bin` is not in your `PATH`, add it (for interactive shells):
 
@@ -156,11 +142,10 @@ rm -f ~/.config/systemd/user/minecraftd.service
 systemctl --user daemon-reload
 ```
 
-Remove binaries (pick the location you used):
+Remove binaries:
 
 ```bash
 rm -f ~/.local/bin/minecraftd ~/.local/bin/mcctl
-rm -f ~/.cargo/bin/minecraftd ~/.cargo/bin/mcctl
 ```
 
 Remove the auto-downloaded Mojang Java runtime cache (optional):
