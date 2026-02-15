@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     net::Ipv4Addr,
     path::{Path, PathBuf},
     sync::LazyLock,
@@ -9,30 +8,34 @@ use std::{
 use anyhow::{Context, bail};
 use pty_process::Pty;
 use rand::distr::{Alphanumeric, SampleString};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    process::Child,
-    sync::Mutex,
-    task::JoinSet,
-    time::timeout,
-};
+use tokio::{process::Child, sync::Mutex, task::JoinSet, time::timeout};
 use uuid::Uuid;
 
 use crate::{
     port::Port,
     server::{
         config::{Connection, ServerConfig},
+        runner::{
+            running_servers::RunningServers,
+            terminal::{
+                TerminalInput, TerminalOutput, spawn_terminal_reader, spawn_terminal_writer,
+            },
+        },
         server_list_ping::server_list_ping,
         server_properties::ServerProperties,
     },
     util::observable_value::ObservableValue,
 };
 
+pub use terminal::{TerminalReader, TerminalWriter};
+
+mod running_servers;
+mod terminal;
+
 const STOP_TIMEOUT_SECS: u64 = 180;
 const MINECRAFT_DEFAULT_PORT: u16 = 25565;
 const PTY_DEFAULT_ROWS: u16 = 24;
 const PTY_DEFAULT_COLS: u16 = 80;
-const TERMINAL_BUFFER_SIZE: usize = 1024;
 const REQUEST_STOP_RETRY_LIMIT: usize = 5;
 const REQUEST_STOP_RETRY_INTERVAL_SECS: u64 = 10;
 
@@ -40,66 +43,6 @@ static RUNNER: LazyLock<Mutex<Runner>> = LazyLock::new(|| Mutex::new(Runner::new
 
 struct Runner {
     running_servers: RunningServers,
-}
-
-struct RunningServers {
-    servers: HashMap<Uuid, RunningServer>,
-    hostname_to_id: HashMap<String, Uuid>,
-    server_dir_to_id: HashMap<PathBuf, Uuid>,
-}
-impl RunningServers {
-    fn new() -> Self {
-        Self {
-            servers: HashMap::new(),
-            hostname_to_id: HashMap::new(),
-            server_dir_to_id: HashMap::new(),
-        }
-    }
-    fn insert(&mut self, server: RunningServer) {
-        if let Connection::Proxy { hostname } = &server.config.connection {
-            self.hostname_to_id.insert(hostname.to_string(), server.id);
-        }
-        self.server_dir_to_id
-            .insert(server.server_dir.clone(), server.id);
-        self.servers.insert(server.id, server);
-    }
-    fn remove(&mut self, id: &Uuid) -> Option<RunningServer> {
-        let server = self.servers.remove(id)?;
-        if let Connection::Proxy { hostname } = &server.config.connection {
-            self.hostname_to_id.remove(hostname);
-        }
-        self.server_dir_to_id.remove(&server.server_dir);
-        Some(server)
-    }
-    fn contains(&self, id: &Uuid) -> bool {
-        self.servers.contains_key(id)
-    }
-    fn get(&self, id: &Uuid) -> Option<&RunningServer> {
-        self.servers.get(id)
-    }
-    fn get_mut(&mut self, id: &Uuid) -> Option<&mut RunningServer> {
-        self.servers.get_mut(id)
-    }
-    fn get_id_by_hostname(&self, hostname: &str) -> Option<Uuid> {
-        self.hostname_to_id.get(hostname).copied()
-    }
-    fn get_id_by_server_dir(&self, server_dir: &Path) -> anyhow::Result<Option<Uuid>> {
-        Ok(self
-            .server_dir_to_id
-            .get(&server_dir.canonicalize()?)
-            .copied())
-    }
-    fn get_by_server_dir(&self, server_dir: &Path) -> anyhow::Result<Option<&RunningServer>> {
-        let id = match self.get_id_by_server_dir(server_dir)? {
-            Some(id) => id,
-            None => return Ok(None),
-        };
-        Ok(self.servers.get(&id))
-    }
-    fn get_mut_by_server_dir(&mut self, server_dir: &Path) -> Option<&mut RunningServer> {
-        let id = self.get_id_by_server_dir(server_dir).ok().flatten()?;
-        self.servers.get_mut(&id)
-    }
 }
 
 struct RunningServer {
@@ -144,31 +87,6 @@ pub enum ServerStatus {
     Stopped,
 }
 
-#[allow(clippy::large_enum_variant)]
-enum TerminalInput {
-    Input { content: Buffer },
-    Resize { cols: u16, rows: u16 },
-}
-
-#[derive(Debug, Clone)]
-enum TerminalOutput {
-    Output { content: Buffer },
-}
-
-#[derive(Debug, Clone)]
-pub struct Buffer {
-    pub len: usize,
-    pub data: [u8; TERMINAL_BUFFER_SIZE],
-}
-impl Default for Buffer {
-    fn default() -> Self {
-        Self {
-            len: 0,
-            data: [0; TERMINAL_BUFFER_SIZE],
-        }
-    }
-}
-
 enum ServerPort {
     Proxy(Port),
     Direct(u16),
@@ -180,14 +98,6 @@ impl ServerPort {
             ServerPort::Direct(p) => *p,
         }
     }
-}
-
-pub struct TerminalWriter {
-    terminal_in: tokio::sync::mpsc::Sender<TerminalInput>,
-}
-
-pub struct TerminalReader {
-    terminal_out: tokio::sync::broadcast::Receiver<TerminalOutput>,
 }
 
 impl Runner {
@@ -221,7 +131,7 @@ pub async fn get_running_servers() -> Vec<RunningServerInfo> {
     let runner = RUNNER.lock().await;
     let mut servers = Vec::new();
 
-    for server in runner.running_servers.servers.values() {
+    for server in runner.running_servers.iter() {
         let players = match server.status.get() {
             ServerStatus::Ready => {
                 server_list_ping((Ipv4Addr::LOCALHOST, server.server_port.port()))
@@ -295,8 +205,8 @@ pub async fn attach_terminal(
     let terminal_in = server.terminal_in.clone();
     let terminal_out = server.terminal_out.subscribe();
     Ok((
-        TerminalReader { terminal_out },
-        TerminalWriter { terminal_in },
+        TerminalReader::new(terminal_out),
+        TerminalWriter::new(terminal_in),
     ))
 }
 
@@ -331,7 +241,7 @@ pub async fn shutdown() {
 
     {
         let runner = RUNNER.lock().await;
-        for server in runner.running_servers.servers.values() {
+        for server in runner.running_servers.iter() {
             let server_id = server.id;
             join_set.spawn(async move {
                 if let Err(e) = do_stop_server(server_id, false).await {
@@ -495,58 +405,6 @@ fn start_command_with_pty(
     Ok((pty, child))
 }
 
-fn spawn_terminal_writer(
-    mut pty_writer: pty_process::OwnedWritePty,
-    mut term_in_rx: tokio::sync::mpsc::Receiver<TerminalInput>,
-) {
-    tokio::spawn(async move {
-        while let Some(input) = term_in_rx.recv().await {
-            match input {
-                TerminalInput::Input { content } => {
-                    trace!(
-                        "Writing to PTY: {}",
-                        String::from_utf8_lossy(&content.data[..content.len])
-                    );
-
-                    if let Err(e) = pty_writer.write_all(&content.data[..content.len]).await {
-                        eprintln!("Failed to write to PTY: {e}");
-                        break;
-                    }
-                }
-                TerminalInput::Resize { cols, rows } => {
-                    if let Err(e) = pty_writer.resize(pty_process::Size::new(rows, cols)) {
-                        eprintln!("Failed to resize PTY: {e}");
-                        break;
-                    }
-                }
-            }
-        }
-    });
-}
-
-fn spawn_terminal_reader(
-    mut pty_reader: pty_process::OwnedReadPty,
-    term_out_tx: tokio::sync::broadcast::Sender<TerminalOutput>,
-) {
-    tokio::spawn(async move {
-        loop {
-            let mut buffer = Buffer::default();
-
-            buffer.len = match pty_reader.read(&mut buffer.data).await {
-                Ok(0) | Err(_) => break, // I/O error on process exit
-                Ok(n) => n,
-            };
-
-            trace!(
-                "Read from PTY: {}",
-                String::from_utf8_lossy(&buffer.data[..buffer.len])
-            );
-
-            let _ = term_out_tx.send(TerminalOutput::Output { content: buffer });
-        }
-    });
-}
-
 fn spawn_process_watcher(id: Uuid, mut process: Child) {
     tokio::spawn(async move {
         match process.wait().await {
@@ -708,45 +566,4 @@ async fn do_kill_server(id: Uuid) -> anyhow::Result<()> {
         nix::sys::signal::Signal::SIGKILL,
     )?;
     Ok(())
-}
-
-impl mcctl_protocol::server::TerminalWriter<anyhow::Error> for TerminalWriter {
-    async fn write(&mut self, content: &[u8]) -> anyhow::Result<()> {
-        let mut offset = 0;
-        while offset < content.len() {
-            let chunk_size = std::cmp::min(TERMINAL_BUFFER_SIZE, content.len() - offset);
-            let mut buffer = Buffer {
-                len: chunk_size,
-                ..Default::default()
-            };
-            buffer.data[..chunk_size].copy_from_slice(&content[offset..offset + chunk_size]);
-
-            self.terminal_in
-                .send(TerminalInput::Input { content: buffer })
-                .await
-                .context("Failed to send terminal input")?;
-
-            offset += chunk_size;
-        }
-        Ok(())
-    }
-
-    async fn resize(&mut self, cols: u16, rows: u16) -> anyhow::Result<()> {
-        self.terminal_in
-            .send(TerminalInput::Resize { cols, rows })
-            .await
-            .context("Failed to send terminal resize")?;
-        Ok(())
-    }
-}
-
-impl mcctl_protocol::server::TerminalReader<anyhow::Error> for TerminalReader {
-    async fn read(&mut self) -> anyhow::Result<Option<mcctl_protocol::TerminalOutput>> {
-        match self.terminal_out.recv().await {
-            Ok(TerminalOutput::Output { content }) => Ok(Some(mcctl_protocol::TerminalOutput {
-                content: content.data[..content.len].to_vec(),
-            })),
-            Err(_) => Ok(None),
-        }
-    }
 }
