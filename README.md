@@ -5,21 +5,6 @@
 - Daemon: `minecraftd`
 - Control CLI: `mcctl`
 
-## Table of Contents
-
-- [Key Features](#key-features)
-- [Requirements](#requirements)
-  - [Paths Used (typical)](#paths-used-typical)
-- [Installation](#installation)
-  - [Build locally](#build-locally)
-  - [Install binaries](#install-binaries)
-  - [Running with systemd (user service)](#running-with-systemd-user-service)
-  - [Uninstall](#uninstall)
-- [Usage (Quick Start)](#usage-quick-start)
-- [Server Directory Layout](#server-directory-layout)
-- [`minecraftd.yaml` (Configuration)](#minecraftdyaml-configuration)
-- [Troubleshooting](#troubleshooting)
-
 ## Key Features
 
 - Create servers (Vanilla / Paper)
@@ -38,20 +23,14 @@
 
 - Linux
 - Rust toolchain (`cargo`)
-- `protoc` (Protocol Buffers compiler)
+- Protocol Buffers compiler (`protoc`)
   - Debian/Ubuntu: `sudo apt-get install -y protobuf-compiler`
   - Arch Linux: `sudo pacman -S protobuf`
 - systemd (optional, for user service)
 
-### Paths Used (typical)
-
-- Daemon socket: `$XDG_RUNTIME_DIR/minecraftd.sock` ($XDG_RUNTIME_DIR is usually something like `/run/user/1000`)
-- Daemon lock: `$XDG_RUNTIME_DIR/minecraftd.lock`
-- Mojang Java Runtime (auto-download): typically `~/.local/share/minecraftd/runtimes/...`
-
 ## Installation
 
-### Build locally
+### Build
 
 From the repository root:
 
@@ -66,26 +45,14 @@ Build artifacts:
 
 ### Install binaries
 
-#### Copy from `target/release` to `~/.local/bin` (recommended for systemd)
-
-The systemd user unit below uses `ExecStart=%h/.local/bin/minecraftd`, so install the binaries to `~/.local/bin`:
-
 ```bash
 install -Dm755 target/release/minecraftd ~/.local/bin/minecraftd
 install -Dm755 target/release/mcctl ~/.local/bin/mcctl
 ```
 
-If `~/.local/bin` is not in your `PATH`, add it (for interactive shells):
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-To make this persistent, add the line to your shell startup file (e.g., `~/.profile`, `~/.bashrc`, or `~/.zshrc`).
-
 ### Running with systemd (user service)
 
-1) Create a unit file at `~/.config/systemd/user/minecraftd.service`:
+Create a unit file at `~/.config/systemd/user/minecraftd.service`:
 
 ```ini
 [Unit]
@@ -106,20 +73,6 @@ RestartSec=2
 
 [Install]
 WantedBy=default.target
-```
-
-2) Reload and start it:
-
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now minecraftd
-```
-
-3) Check status / logs:
-
-```bash
-systemctl --user status minecraftd
-journalctl --user -u minecraftd -f
 ```
 
 Notes:
@@ -145,26 +98,22 @@ systemctl --user daemon-reload
 Remove binaries:
 
 ```bash
-rm -f ~/.local/bin/minecraftd ~/.local/bin/mcctl
+rm -f ~/.local/bin/{minecraftd,mcctl}
 ```
 
-Remove the auto-downloaded Mojang Java runtime cache (optional):
+Remove the auto-downloaded Java runtimes and other data:
 
 ```bash
-rm -rf ~/.local/share/minecraftd/runtimes
+rm -rf ~/.local/share/minecraftd
 ```
 
-This only removes cached Java runtimes. Your server directories (worlds, configs, logs) are not affected.
-
-## Usage (Quick Start)
-
-Typical workflow: start the daemon, create a server, then `start` / `stop` / `attach` using `mcctl`.
+## Usage
 
 ### 1) Start `minecraftd`
 
 You can run `minecraftd` either via systemd (recommended) or manually.
 
-#### Option A: systemd (recommended)
+#### Option A: systemd
 
 If you set up the systemd unit in the Installation section:
 
@@ -172,30 +121,12 @@ If you set up the systemd unit in the Installation section:
 systemctl --user enable --now minecraftd
 ```
 
-Logs:
-
-```bash
-journalctl --user -u minecraftd -f
-```
-
-#### Option B: run manually (quick testing)
+#### Option B: run manually
 
 If you installed `minecraftd` to your `PATH`:
 
 ```bash
 RUST_LOG=info minecraftd
-```
-
-Or, from the repository root (build artifacts):
-
-```bash
-RUST_LOG=info ./target/release/minecraftd
-```
-
-If `./target/release/minecraftd` does not exist yet, build it first:
-
-```bash
-cargo build --release
 ```
 
 For up-to-date daemon options, run `minecraftd --help`. Common options:
@@ -216,6 +147,7 @@ mcctl create ~/mc/servers/paper-1
 
 Common options:
 
+- `--name` (display name)
 - `--server-implementation` (`vanilla` or `paper`)
 - `--version` (e.g., `1.21.11`)
 - `--build` (Paper build number, e.g., `123`)
@@ -258,7 +190,7 @@ To detach from the console, press `Ctrl+C`.
 
 #### For `direct`
 
-Connect directly to the `server-port` in `server.properties` (default is usually 25565 unless changed).
+Connect directly to the `server-port` in `server.properties`.
 
 #### For `proxy`
 
@@ -294,7 +226,7 @@ On startup, `server.properties` is created/updated with:
 - `server_implementation`: `vanilla` or `paper`
 - `version` / `build`: the chosen version/build
 - `command`: start command (`${java}` will be replaced with the Java executable)
-- `java_runtime`: Mojang runtime auto-download or a custom Java
+- `java_runtime`: auto-downloaded Java runtime or custom Java (see below)
 - `connection`: `direct` / `proxy` (`proxy` requires `hostname`)
 
 Example (proxy + Mojang runtime):
@@ -325,20 +257,3 @@ java_runtime:
   type: custom
   java_home: /usr/lib/jvm/temurin-21-jdk
 ```
-
-## Troubleshooting
-
-### `XDG_RUNTIME_DIR environment variable is not set`
-
-`minecraftd` uses `XDG_RUNTIME_DIR` for its lock and socket. Under a systemd user session this is usually set automatically.
-If it is not set, create an appropriate runtime directory and set `XDG_RUNTIME_DIR` (e.g., a directory only your user can read).
-
-### `Failed to acquire exclusive lock ... Is another instance running?`
-
-Another `minecraftd` instance is running (lock file: `$XDG_RUNTIME_DIR/minecraftd.lock`).
-
-### `Failed to connect to minecraftd`
-
-- Check that `minecraftd` is running
-- Check that the socket exists: `$XDG_RUNTIME_DIR/minecraftd.sock`
-- Check that you are using the same user (permissions on the runtime directory/socket matter)
