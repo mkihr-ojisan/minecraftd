@@ -1,0 +1,12 @@
+[package]
+name = "minecraft-protocol"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.101"
+log = "0.4.29"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.49.0", features = ["io-util"] }
+uuid = { version = "1.20.0", features = ["serde"] }

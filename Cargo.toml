@@ -1,0 +1,3 @@
+[workspace]
+members = ["mcctl", "mcctl-protocol", "minecraft-protocol", "minecraftd", "mojang-piston-api", "minecraft-rcon"]
+resolver = "3"

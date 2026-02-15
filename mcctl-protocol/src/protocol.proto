@@ -1,0 +1,134 @@
+syntax = "proto3";
+
+message Request {
+  oneof payload {
+    GetServerImplementationsRequest get_server_implementations_request = 1;
+    GetVersionsRequest get_versions_request = 2;
+    GetBuildsRequest get_builds_request = 3;
+    CreateServerRequest create_server_request = 4;
+    StartServerRequest start_server_request = 5;
+    StopServerRequest stop_server_request = 6;
+    KillServerRequest kill_server_request = 7;
+    AttachTerminalRequest attach_terminal_request = 8;
+    GetRunningServersRequest get_running_servers_request = 9;
+    WaitServerReadyRequest wait_server_ready_request = 10;
+    RestartServerRequest restart_server_request = 11;
+  }
+}
+
+message Response {
+  oneof payload {
+    ErrorResponse error_response = 1;
+    GetServerImplementationsResponse get_server_implementations_response = 2;
+    GetVersionsResponse get_versions_response = 3;
+    GetBuildsResponse get_builds_response = 4;
+    GetRunningServersResponse get_running_servers_response = 10;
+  }
+}
+
+message ErrorResponse {
+  string message = 1;
+}
+
+message GetServerImplementationsRequest {
+}
+
+message GetServerImplementationsResponse {
+  repeated string implementations = 1;
+}
+
+message GetVersionsRequest {
+  string server_implementation = 1;
+}
+
+message GetVersionsResponse {
+  repeated string versions = 1;
+}
+
+message GetBuildsRequest {
+  string server_implementation = 1;
+  string version = 2;
+}
+
+message GetBuildsResponse {
+  repeated string builds = 1;
+}
+
+message CreateServerRequest {
+  string server_dir = 1;
+  string name = 2;
+  string server_implementation = 3;
+  string version = 4;
+  string build = 5;
+  ConnectionType connection = 6;
+  optional string hostname = 7;
+}
+
+enum ConnectionType {
+  DIRECT = 0;
+  PROXY = 1;
+}
+
+message StartServerRequest {
+  string server_dir = 1;
+}
+
+message StopServerRequest {
+  string server_dir = 1;
+}
+
+message KillServerRequest {
+  string server_dir = 1;
+}
+
+message AttachTerminalRequest {
+  string server_dir = 1;
+}
+
+message TerminalInput {
+  oneof input {
+    bytes content = 1;
+    TerminalSize resize = 2;
+  }
+}
+
+message TerminalSize {
+  uint32 cols = 1;
+  uint32 rows = 2;
+}
+
+message TerminalOutput {
+  bytes content = 1;
+}
+
+message GetRunningServersRequest {
+}
+
+message GetRunningServersResponse {
+  repeated RunningServer servers = 1;
+}
+
+message RunningServer {
+  string server_dir = 1;
+  string name = 2;
+  ServerStatus status = 3;
+  uint64 uptime_seconds = 4;
+  uint32 port = 5;
+  optional uint32 player_count = 6;
+  optional uint32 max_players = 7;
+}
+
+enum ServerStatus {
+  STARTING = 0;
+  READY = 1;
+  STOPPING = 2;
+  RESTARTING = 3;
+}
+
+message WaitServerReadyRequest {
+  string server_dir = 1;
+}
+
+message RestartServerRequest {
+  string server_dir = 1;
+}
