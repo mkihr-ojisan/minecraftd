@@ -16,6 +16,9 @@ use crate::{
     server::{
         config::{Connection, ServerConfig},
         runner::{
+            auto_start::{
+                add_auto_start_directory, get_auto_start_directories, remove_auto_start_directory,
+            },
             running_servers::RunningServers,
             terminal::{
                 TerminalInput, TerminalOutput, spawn_terminal_reader, spawn_terminal_writer,
@@ -29,6 +32,7 @@ use crate::{
 
 pub use terminal::{TerminalReader, TerminalWriter};
 
+mod auto_start;
 mod running_servers;
 mod terminal;
 
@@ -165,7 +169,7 @@ pub async fn get_running_servers() -> Vec<RunningServerInfo> {
 }
 
 pub async fn start_server(server_dir: &Path) -> anyhow::Result<()> {
-    do_start_server(server_dir, false).await
+    do_start_server(server_dir, false, false).await
 }
 
 pub async fn stop_server(server_dir: &Path) -> anyhow::Result<()> {
@@ -176,6 +180,14 @@ pub async fn stop_server(server_dir: &Path) -> anyhow::Result<()> {
             bail!("Server at '{}' is not running", server_dir.display());
         };
         id = server.id;
+
+        if server.config.auto_start {
+            info!(
+                "Removing server at '{}' from auto-start list",
+                server_dir.display()
+            );
+            remove_auto_start_directory(&server.server_dir).await?;
+        }
     }
 
     do_stop_server(id, false).await
@@ -233,7 +245,28 @@ pub async fn restart_server(server_dir: &Path) -> anyhow::Result<()> {
     };
 
     do_stop_server(id, true).await?;
-    do_start_server(server_dir, true).await
+    do_start_server(server_dir, true, false).await
+}
+
+pub async fn start_auto_start_servers() {
+    let auto_start_servers = get_auto_start_directories().await;
+
+    info!("Auto-starting servers: {:?}", auto_start_servers);
+
+    for server_dir in auto_start_servers {
+        tokio::spawn(async move {
+            if let Err(e) = do_start_server(&server_dir, false, true).await {
+                error!(
+                    "Failed to auto-start server at '{}': {:?}",
+                    server_dir.display(),
+                    e
+                );
+                if let Err(e) = remove_auto_start_directory(&server_dir).await {
+                    error!("{e:?}",);
+                }
+            }
+        });
+    }
 }
 
 pub async fn shutdown() {
@@ -254,7 +287,11 @@ pub async fn shutdown() {
     join_set.join_all().await;
 }
 
-async fn do_start_server(server_dir: &Path, restarting: bool) -> anyhow::Result<()> {
+async fn do_start_server(
+    server_dir: &Path,
+    restarting: bool,
+    auto_starting: bool,
+) -> anyhow::Result<()> {
     let mut runner = RUNNER.lock().await;
 
     let server_dir = server_dir.canonicalize()?;
@@ -286,6 +323,27 @@ async fn do_start_server(server_dir: &Path, restarting: bool) -> anyhow::Result<
             .is_some()
     {
         bail!("A server with hostname '{}' is already running", hostname);
+    }
+
+    if config.auto_start {
+        add_auto_start_directory(&server_dir).await?;
+        info!(
+            "Auto-start is enabled for server at '{}'",
+            server_dir.display()
+        );
+    } else {
+        remove_auto_start_directory(&server_dir).await?;
+        info!(
+            "Auto-start is disabled for server at '{}'",
+            server_dir.display()
+        );
+        if auto_starting {
+            info!(
+                "Server at '{}' is not set to auto-start. Skipping.",
+                server_dir.display()
+            );
+            return Ok(());
+        }
     }
 
     let (server_port, rcon_port, rcon_password) = prepare_server(&server_dir, &config).await?;
