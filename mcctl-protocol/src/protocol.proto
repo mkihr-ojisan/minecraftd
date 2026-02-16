@@ -44,7 +44,12 @@ message GetVersionsRequest {
 }
 
 message GetVersionsResponse {
-  repeated string versions = 1;
+  repeated Version versions = 1;
+}
+
+message Version {
+  string name = 1;
+  bool is_stable = 2;
 }
 
 message GetBuildsRequest {
@@ -53,7 +58,12 @@ message GetBuildsRequest {
 }
 
 message GetBuildsResponse {
-  repeated string builds = 1;
+  repeated Build builds = 1;
+}
+
+message Build {
+  string name = 1;
+  bool is_stable = 2;
 }
 
 message CreateServerRequest {

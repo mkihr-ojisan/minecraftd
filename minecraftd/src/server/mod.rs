@@ -3,7 +3,10 @@ use std::path::Path;
 use anyhow::{Context, bail};
 use minecraftd_manifest::{Connection, ServerManifest};
 
-use crate::server::{implementations::get_server_implementation, java_runtime::JavaRuntimeExt};
+use crate::server::{
+    implementations::{Build, Version, get_server_implementation},
+    java_runtime::JavaRuntimeExt,
+};
 
 pub mod config;
 mod implementations;
@@ -19,33 +22,23 @@ pub fn get_server_implementations() -> impl Iterator<Item = &'static str> {
         .map(|impl_| impl_.name())
 }
 
-pub async fn get_server_versions(server_implementation: &str) -> anyhow::Result<Vec<String>> {
+pub async fn get_server_versions(server_implementation: &str) -> anyhow::Result<Vec<Version>> {
     let Some(implementation) = get_server_implementation(server_implementation) else {
         bail!("Unknown server implementation '{}'", server_implementation);
     };
 
-    Ok(implementation
-        .get_versions()
-        .await?
-        .into_iter()
-        .map(|v| v.name)
-        .collect())
+    implementation.get_versions().await
 }
 
 pub async fn get_server_builds(
     server_implementation: &str,
     version: &str,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<Vec<Build>> {
     let Some(implementation) = get_server_implementation(server_implementation) else {
         bail!("Unknown server implementation '{}'", server_implementation);
     };
 
-    Ok(implementation
-        .get_builds(version)
-        .await?
-        .into_iter()
-        .map(|b| b.name)
-        .collect())
+    implementation.get_builds(version).await
 }
 
 pub async fn create_server(

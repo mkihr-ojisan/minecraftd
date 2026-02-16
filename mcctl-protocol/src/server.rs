@@ -21,11 +21,11 @@ where
     fn get_server_implementations() -> impl Future<Output = Result<Vec<String>, E>> + Send;
     fn get_versions(
         server_implementation: &str,
-    ) -> impl Future<Output = Result<Vec<String>, E>> + Send;
+    ) -> impl Future<Output = Result<Vec<Version>, E>> + Send;
     fn get_builds(
         server_implementation: &str,
         version: &str,
-    ) -> impl Future<Output = Result<Vec<String>, E>> + Send;
+    ) -> impl Future<Output = Result<Vec<Build>, E>> + Send;
     fn create_server(
         name: &str,
         server_dir: &Path,

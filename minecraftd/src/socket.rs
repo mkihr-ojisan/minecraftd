@@ -20,12 +20,33 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
             .collect())
     }
 
-    async fn get_versions(server_implementation: &str) -> anyhow::Result<Vec<String>> {
-        server::get_server_versions(server_implementation).await
+    async fn get_versions(
+        server_implementation: &str,
+    ) -> anyhow::Result<Vec<mcctl_protocol::Version>> {
+        Ok(server::get_server_versions(server_implementation)
+            .await
+            .into_iter()
+            .flatten()
+            .map(|v| mcctl_protocol::Version {
+                name: v.name,
+                is_stable: v.is_stable,
+            })
+            .collect())
     }
 
-    async fn get_builds(server_implementation: &str, version: &str) -> anyhow::Result<Vec<String>> {
-        server::get_server_builds(server_implementation, version).await
+    async fn get_builds(
+        server_implementation: &str,
+        version: &str,
+    ) -> anyhow::Result<Vec<mcctl_protocol::Build>> {
+        Ok(server::get_server_builds(server_implementation, version)
+            .await
+            .into_iter()
+            .flatten()
+            .map(|b| mcctl_protocol::Build {
+                name: b.name,
+                is_stable: b.is_stable,
+            })
+            .collect())
     }
 
     async fn create_server(

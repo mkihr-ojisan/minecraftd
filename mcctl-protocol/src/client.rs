@@ -68,7 +68,7 @@ impl Client {
     pub async fn get_versions(
         &mut self,
         server_implementation: impl Into<String>,
-    ) -> Result<Vec<String>, Error> {
+    ) -> Result<Vec<Version>, Error> {
         let response_payload = self
             .send_request(RequestPayload::GetVersionsRequest(GetVersionsRequest {
                 server_implementation: server_implementation.into(),
@@ -90,7 +90,7 @@ impl Client {
         &mut self,
         server_implementation: impl Into<String>,
         version: impl Into<String>,
-    ) -> Result<Vec<String>, Error> {
+    ) -> Result<Vec<Build>, Error> {
         let response_payload = self
             .send_request(RequestPayload::GetBuildsRequest(GetBuildsRequest {
                 server_implementation: server_implementation.into(),

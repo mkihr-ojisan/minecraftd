@@ -1,4 +1,4 @@
-use std::{path::Path, time::Duration};
+use std::{fmt::Display, path::Path, time::Duration};
 
 use anyhow::{Context, bail};
 use clap::Parser;
@@ -104,12 +104,26 @@ async fn create_server(args: cli::CreateArgs) -> anyhow::Result<()> {
     let version = match args.version {
         Some(v) => v,
         None => {
+            struct VersionDisplay(mcctl_protocol::Version);
+            impl Display for VersionDisplay {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    if self.0.is_stable {
+                        write!(f, "{}", self.0.name)
+                    } else {
+                        write!(f, "{} (unstable)", self.0.name)
+                    }
+                }
+            }
+
             let versions = client
                 .get_versions(&server_implementation)
                 .await
-                .context("Failed to get versions")?;
+                .context("Failed to get versions")?
+                .into_iter()
+                .map(VersionDisplay)
+                .collect::<Vec<_>>();
 
-            inquire::Select::new("Version:", versions).prompt()?
+            inquire::Select::new("Version:", versions).prompt()?.0.name
         }
     };
 
@@ -122,9 +136,22 @@ async fn create_server(args: cli::CreateArgs) -> anyhow::Result<()> {
                 .context("Failed to get builds")?;
 
             if builds.len() == 1 {
-                builds.into_iter().next().unwrap()
+                builds.into_iter().next().unwrap().name
             } else {
-                inquire::Select::new("Build:", builds).prompt()?
+                struct BuildDisplay(mcctl_protocol::Build);
+                impl Display for BuildDisplay {
+                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        if self.0.is_stable {
+                            write!(f, "{}", self.0.name)
+                        } else {
+                            write!(f, "{} (unstable)", self.0.name)
+                        }
+                    }
+                }
+
+                let builds = builds.into_iter().map(BuildDisplay).collect::<Vec<_>>();
+
+                inquire::Select::new("Build:", builds).prompt()?.0.name
             }
         }
     };
