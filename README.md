@@ -203,12 +203,24 @@ For local testing, adding an `/etc/hosts` entry is convenient:
 127.0.0.1 paper-1.local
 ```
 
+### 6) Update a server
+
+Update the server manifest to the latest stable version/build (downloads/caches the new server jar if needed):
+
+```bash
+mcctl update ~/mc/servers/paper-1
+```
+
+To update to the latest available (may include unstable/snapshots depending on implementation):
+
+```bash
+mcctl update --update-type latest ~/mc/servers/paper-1
+```
+
 ## Server Directory Layout
 
 After running `mcctl create`, the server directory will contain at least:
 
-- `server.jar`
-- `eula.txt` (with `eula=true`)
 - `minecraftd.yaml` (minecraftd manifest)
 
 On startup, `server.properties` is created/updated with:
@@ -225,9 +237,13 @@ On startup, `server.properties` is created/updated with:
 - `name`: display name
 - `server_implementation`: `vanilla` or `paper`
 - `version` / `build`: the chosen version/build
-- `command`: start command (`${java}` will be replaced with the Java executable)
+- `command`: start command placeholders:
+  - `${java}`: Java executable path
+  - `${server_jar}`: server jar path for the chosen implementation/version/build
 - `java_runtime`: auto-downloaded Java runtime or custom Java (see below)
 - `connection`: `direct` / `proxy` (`proxy` requires `hostname`)
+- `auto_start`: if `true`, the server directory is added to an auto-start list on start
+- `restart_on_failure`: if `true`, restarts the server when it exits unexpectedly
 
 Example (proxy + Mojang runtime):
 
@@ -240,7 +256,7 @@ command:
   - "${java}"
   - "-Xmx4G"
   - "-jar"
-  - "server.jar"
+  - "${server_jar}"
   - "nogui"
 java_runtime:
   type: mojang
@@ -248,6 +264,8 @@ java_runtime:
 connection:
   type: proxy
   hostname: paper-1.local
+auto_start: true
+restart_on_failure: true
 ```
 
 Example (use a custom Java):
