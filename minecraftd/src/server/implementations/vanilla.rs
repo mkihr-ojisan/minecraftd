@@ -1,5 +1,6 @@
 use anyhow::{Context, bail};
-use minecraftd_manifest::{JavaRuntime, ServerManifest};
+use bytes::Bytes;
+use minecraftd_manifest::JavaRuntime;
 use sha1::{Digest, Sha1};
 
 use crate::{
@@ -12,16 +13,15 @@ static CLIENT: LazyInitHttpClient = LazyInitHttpClient::new();
 pub struct Vanilla;
 
 impl ServerImplementation for Vanilla {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "vanilla"
     }
 
     fn get_versions(&self) -> BoxedFuture<'static, anyhow::Result<Vec<String>>> {
         Box::pin(async move {
-            let version_manifest =
-                mojang_piston_api::minecraft::version_manifest::get_version_manifest()
-                    .await
-                    .context("Failed to fetch version manifest")?;
+            let version_manifest = crate::util::cached_mojang_piston_api::get_version_manifest()
+                .await
+                .context("Failed to fetch version manifest")?;
 
             Ok(version_manifest
                 .versions
@@ -38,17 +38,45 @@ impl ServerImplementation for Vanilla {
         })
     }
 
-    fn create_server<'a>(
+    fn default_java_runtime<'a>(
         &self,
         version: &'a str,
         _build: &'a str,
-        server_dir: &'a std::path::Path,
-    ) -> BoxedFuture<'a, anyhow::Result<ServerManifest>> {
+    ) -> BoxedFuture<'a, anyhow::Result<JavaRuntime>> {
         Box::pin(async move {
-            let version_manifest =
-                mojang_piston_api::minecraft::version_manifest::get_version_manifest()
-                    .await
-                    .context("Failed to fetch version manifest")?;
+            let version_manifest = crate::util::cached_mojang_piston_api::get_version_manifest()
+                .await
+                .context("Failed to fetch version manifest")?;
+
+            let version_info = version_manifest
+                .versions
+                .into_iter()
+                .find(|v| v.id == version)
+                .ok_or_else(|| anyhow::anyhow!("Version '{}' not found", version))?;
+
+            let manifest = version_info
+                .get()
+                .await
+                .context("Failed to fetch manifest")?;
+
+            let component = manifest
+                .java_version
+                .context("Java version not specified in manifest")?
+                .component;
+
+            Ok(JavaRuntime::Mojang { name: component })
+        })
+    }
+
+    fn download_server_jar<'a>(
+        &self,
+        version: &'a str,
+        _build: &'a str,
+    ) -> BoxedFuture<'a, anyhow::Result<Bytes>> {
+        Box::pin(async move {
+            let version_manifest = crate::util::cached_mojang_piston_api::get_version_manifest()
+                .await
+                .context("Failed to fetch version manifest")?;
 
             let version_info = version_manifest
                 .versions
@@ -82,29 +110,7 @@ impl ServerImplementation for Vanilla {
                 bail!("Downloaded jar hash does not match expected hash");
             }
 
-            tokio::fs::write(server_dir.join("server.jar"), &jar)
-                .await
-                .context("Failed to write server jar to disk")?;
-
-            tokio::fs::write(server_dir.join("eula.txt"), "eula=true")
-                .await
-                .context("Failed to write eula.txt")?;
-
-            let default_manifest = ServerManifest::default(
-                "vanilla",
-                version,
-                version,
-                JavaRuntime::Mojang {
-                    name: manifest
-                        .java_version
-                        .as_ref()
-                        .map(|jv| &*jv.component)
-                        .unwrap_or("java-runtime-delta")
-                        .to_string(),
-                },
-            );
-
-            Ok(default_manifest)
+            Ok(jar)
         })
     }
 }

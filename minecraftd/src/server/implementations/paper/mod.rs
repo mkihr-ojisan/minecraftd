@@ -1,7 +1,6 @@
-use std::path::Path;
-
 use anyhow::{Context, bail};
-use minecraftd_manifest::{JavaRuntime, ServerManifest};
+use bytes::Bytes;
+use minecraftd_manifest::JavaRuntime;
 use sha1::Digest;
 use sha2::Sha256;
 
@@ -19,7 +18,7 @@ static CLIENT: LazyInitHttpClient = LazyInitHttpClient::new();
 pub struct Paper;
 
 impl ServerImplementation for Paper {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "paper"
     }
 
@@ -37,12 +36,40 @@ impl ServerImplementation for Paper {
         })
     }
 
-    fn create_server<'a>(
+    fn default_java_runtime<'a>(
+        &self,
+        version: &'a str,
+        _build: &'a str,
+    ) -> BoxedFuture<'a, anyhow::Result<JavaRuntime>> {
+        Box::pin(async move {
+            let minecraft_version = version
+                .split('-')
+                .next()
+                .context("Invalid version format")?;
+
+            let component = crate::util::cached_mojang_piston_api::get_version_manifest()
+                .await
+                .context("Failed to fetch version manifest")?
+                .versions
+                .into_iter()
+                .find(|v| v.id == minecraft_version)
+                .context("Version not found in vanilla version manifest")?
+                .get()
+                .await
+                .context("Failed to fetch vanilla manifest")?
+                .java_version
+                .context("Java version info not found in vanilla manifest")?
+                .component;
+
+            Ok(JavaRuntime::Mojang { name: component })
+        })
+    }
+
+    fn download_server_jar<'a>(
         &self,
         version: &'a str,
         build_str: &'a str,
-        server_dir: &'a Path,
-    ) -> BoxedFuture<'a, anyhow::Result<ServerManifest>> {
+    ) -> BoxedFuture<'a, anyhow::Result<Bytes>> {
         Box::pin(async move {
             let build_num = build_str.parse::<u32>().context("Invalid build number")?;
 
@@ -75,37 +102,7 @@ impl ServerImplementation for Paper {
                 bail!("SHA256 checksum mismatch for downloaded server jar");
             }
 
-            tokio::fs::write(server_dir.join("server.jar"), &file)
-                .await
-                .context("Failed to write server jar to disk")?;
-
-            tokio::fs::write(server_dir.join("eula.txt"), "eula=true")
-                .await
-                .context("Failed to write eula.txt")?;
-
-            let java_runtime =
-                mojang_piston_api::minecraft::version_manifest::get_version_manifest()
-                    .await
-                    .context("Failed to fetch version manifest")?
-                    .versions
-                    .into_iter()
-                    .find(|v| v.id == version.split('-').next().unwrap_or(""))
-                    .context("Version not found in vanilla version manifest")?
-                    .get()
-                    .await
-                    .context("Failed to fetch vanilla manifest")?
-                    .java_version
-                    .context("Java version info not found in vanilla manifest")?
-                    .component;
-
-            let default_manifest = ServerManifest::default(
-                "paper",
-                version,
-                build_str,
-                JavaRuntime::Mojang { name: java_runtime },
-            );
-
-            Ok(default_manifest)
+            Ok(file)
         })
     }
 }

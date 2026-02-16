@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -9,7 +12,7 @@ pub struct ServerManifest {
     pub server_implementation: String,
     pub version: String,
     pub build: String,
-    pub command: Vec<String>,
+    pub command: Vec<OsString>,
     pub java_runtime: JavaRuntime,
     #[serde(default)]
     pub restart_on_failure: bool,
@@ -57,11 +60,11 @@ impl ServerManifest {
             version: version.to_string(),
             build: build.to_string(),
             command: vec![
-                "${java}".to_string(),
-                "-Xmx4G".to_string(),
-                "-jar".to_string(),
-                "server.jar".to_string(),
-                "nogui".to_string(),
+                OsString::from("${java}"),
+                OsString::from("-Xmx4G"),
+                OsString::from("-jar"),
+                OsString::from("${server_jar}"),
+                OsString::from("nogui"),
             ],
             java_runtime,
             restart_on_failure: true,

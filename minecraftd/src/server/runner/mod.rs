@@ -1,4 +1,5 @@
 use std::{
+    ffi::{OsStr, OsString},
     net::Ipv4Addr,
     path::{Path, PathBuf},
     sync::LazyLock,
@@ -15,6 +16,7 @@ use uuid::Uuid;
 use crate::{
     port::Port,
     server::{
+        implementations::get_server_implementation,
         java_runtime::JavaRuntimeExt,
         runner::{
             auto_start::{
@@ -28,7 +30,7 @@ use crate::{
         server_list_ping::server_list_ping,
         server_properties::ServerProperties,
     },
-    util::observable_value::ObservableValue,
+    util::{observable_value::ObservableValue, os_str_ext::OsStrExt},
 };
 
 pub use terminal::{TerminalReader, TerminalWriter};
@@ -352,10 +354,21 @@ async fn do_start_server(
     manifest.java_runtime.prepare().await?;
 
     let java_path = manifest.java_runtime.java_path();
-    let command_args_str = command_substitute_placeholders(
-        &manifest.command,
-        java_path.to_str().context("java_path is not valid UTF-8")?,
-    );
+
+    let server_implementation = get_server_implementation(&manifest.server_implementation)
+        .with_context(|| {
+            format!(
+                "Unknown server implementation '{}'",
+                manifest.server_implementation
+            )
+        })?;
+    let server_jar_path = server_implementation
+        .get_server_jar_path(&server_dir, &manifest.version, &manifest.build)
+        .await
+        .context("Failed to prepare server jar")?;
+
+    let command_args_str =
+        command_substitute_placeholders(&manifest.command, &java_path, &server_jar_path);
     let (pty, child) = start_command_with_pty(&command_args_str, &server_dir)?;
     let pid = child.id().context("Failed to get child process ID")?;
 
@@ -427,15 +440,22 @@ async fn prepare_server(
     Ok((server_port, rcon_port, rcon_password))
 }
 
-fn command_substitute_placeholders(command: &[String], java_path: &str) -> Vec<String> {
+fn command_substitute_placeholders(
+    command: &[OsString],
+    java_path: &Path,
+    server_jar_path: &Path,
+) -> Vec<OsString> {
     command
         .iter()
-        .map(|part| part.replace("${java}", java_path))
+        .map(|part| {
+            part.replace(OsStr::new("${java}"), java_path.as_os_str())
+                .replace(OsStr::new("${server_jar}"), server_jar_path.as_os_str())
+        })
         .collect()
 }
 
 fn start_command_with_pty(
-    command_args_str: &[String],
+    command_args_str: &[OsString],
     server_dir: &Path,
 ) -> anyhow::Result<(Pty, Child)> {
     debug!("Starting command: {:?}", command_args_str);
