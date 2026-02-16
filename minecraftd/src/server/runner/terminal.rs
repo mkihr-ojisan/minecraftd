@@ -100,7 +100,7 @@ pub fn spawn_terminal_writer(
                 TerminalInput::Input { content } => {
                     trace!(
                         "Writing to PTY: {}",
-                        String::from_utf8_lossy(&content.data[..content.len])
+                        String::from_utf8_lossy(&content.data[..content.len]).trim()
                     );
 
                     if let Err(e) = pty_writer.write_all(&content.data[..content.len]).await {
@@ -134,7 +134,7 @@ pub fn spawn_terminal_reader(
 
             trace!(
                 "Read from PTY: {}",
-                String::from_utf8_lossy(&buffer.data[..buffer.len])
+                String::from_utf8_lossy(&buffer.data[..buffer.len]).trim()
             );
 
             let _ = term_out_tx.send(TerminalOutput::Output { content: buffer });
