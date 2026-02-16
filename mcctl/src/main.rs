@@ -315,7 +315,9 @@ async fn restart_server(args: cli::RestartArgs) -> anyhow::Result<()> {
     pb.set_message("Restarting server...");
     pb.enable_steady_tick(Duration::from_millis(100));
 
-    client.restart_server(server_dir).await?;
+    client.restart_server(&server_dir).await?;
+
+    client.wait_server_ready(server_dir).await?;
 
     pb.finish_with_message("Server restarted successfully.");
 
