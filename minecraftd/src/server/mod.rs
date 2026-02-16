@@ -8,7 +8,6 @@ use crate::server::{
     java_runtime::JavaRuntimeExt,
 };
 
-pub mod config;
 mod implementations;
 mod java_runtime;
 pub mod proxy_server;
