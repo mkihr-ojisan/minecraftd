@@ -499,13 +499,31 @@ fn spawn_process_watcher(id: Uuid, mut process: Child) {
                 info!("Server process exited with status: {}", status);
 
                 let mut runner = RUNNER.lock().await;
-                runner
+                let server = runner
                     .running_servers
                     .get(&id)
-                    .expect("Server should exist")
-                    .status
-                    .set(ServerStatus::Stopped);
-                runner.running_servers.remove(&id);
+                    .expect("Server should exist");
+                let old_status = server.status.get();
+                server.status.set(ServerStatus::Stopped);
+                let server = runner
+                    .running_servers
+                    .remove(&id)
+                    .expect("Server should exist");
+                drop(runner);
+
+                if !status.success()
+                    && server.manifest.restart_on_failure
+                    && old_status == ServerStatus::Ready
+                {
+                    info!("Server is configured to restart on failure. Restarting...");
+                    if let Err(e) = do_start_server(&server.server_dir, true, false).await {
+                        error!(
+                            "Failed to restart server at '{}': {:?}",
+                            server.server_dir.display(),
+                            e
+                        );
+                    }
+                }
             }
             Err(e) => {
                 error!("Failed to wait for server process: {:?}", e);
@@ -648,6 +666,11 @@ async fn do_kill_server(id: Uuid) -> anyhow::Result<()> {
     let Some(server) = runner.running_servers.get(&id) else {
         bail!("Server is not running");
     };
+
+    server
+        .status
+        .set(ServerStatus::Stopping { restarting: false });
+
     nix::sys::signal::kill(
         nix::unistd::Pid::from_raw(server.pid as i32),
         nix::sys::signal::Signal::SIGKILL,
