@@ -1287,6 +1287,7 @@ dependencies = [
  "indicatif",
  "inquire",
  "mcctl-protocol",
+ "minecraftd-manifest",
  "nix",
  "prost",
  "terminal_size",

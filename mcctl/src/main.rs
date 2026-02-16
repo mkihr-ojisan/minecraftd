@@ -3,6 +3,7 @@ use std::{path::Path, time::Duration};
 use anyhow::{Context, bail};
 use clap::Parser;
 use mcctl_protocol::{ConnectionType, ServerStatus, client::Client};
+use minecraftd_manifest::ServerManifest;
 use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
 use terminal_size::{Height, Width, terminal_size};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -10,6 +11,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::cli::Subcommand;
 
 mod cli;
+mod eula;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -179,6 +181,27 @@ async fn start_server(args: cli::StartArgs) -> anyhow::Result<()> {
         None => std::env::current_dir().context("Failed to get current directory")?,
     };
 
+    if !ServerManifest::manifest_path(&server_dir).exists() {
+        bail!(
+            "No server manifest found in '{}'. Are you sure this is a valid server directory?",
+            server_dir.display()
+        );
+    }
+
+    if !eula::is_accepted(&server_dir).await? {
+        let accept = inquire::Confirm::new(
+            "You must accept the EULA to start the server. Do you accept the EULA?",
+        )
+        .with_default(false)
+        .prompt()?;
+
+        if !accept {
+            bail!("EULA not accepted. Aborting.");
+        }
+
+        eula::accept(&server_dir).await?;
+    }
+
     let server_dir = server_dir
         .canonicalize()
         .context("Failed to canonicalize path")?
@@ -209,6 +232,13 @@ async fn stop_server(args: cli::StopArgs) -> anyhow::Result<()> {
         None => std::env::current_dir().context("Failed to get current directory")?,
     };
 
+    if !ServerManifest::manifest_path(&server_dir).exists() {
+        bail!(
+            "No server manifest found in '{}'. Are you sure this is a valid server directory?",
+            server_dir.display()
+        );
+    }
+
     let server_dir = server_dir
         .canonicalize()
         .context("Failed to canonicalize path")?
@@ -236,6 +266,13 @@ async fn restart_server(args: cli::RestartArgs) -> anyhow::Result<()> {
         Some(p) => p,
         None => std::env::current_dir().context("Failed to get current directory")?,
     };
+
+    if !ServerManifest::manifest_path(&server_dir).exists() {
+        bail!(
+            "No server manifest found in '{}'. Are you sure this is a valid server directory?",
+            server_dir.display()
+        );
+    }
 
     let server_dir = server_dir
         .canonicalize()
@@ -265,6 +302,13 @@ async fn kill_server(args: cli::KillArgs) -> anyhow::Result<()> {
         None => std::env::current_dir().context("Failed to get current directory")?,
     };
 
+    if !ServerManifest::manifest_path(&server_dir).exists() {
+        bail!(
+            "No server manifest found in '{}'. Are you sure this is a valid server directory?",
+            server_dir.display()
+        );
+    }
+
     let server_dir = server_dir
         .canonicalize()
         .context("Failed to canonicalize path")?
@@ -292,6 +336,13 @@ async fn attach_server_terminal(args: cli::AttachArgs) -> anyhow::Result<()> {
         Some(p) => p,
         None => std::env::current_dir().context("Failed to get current directory")?,
     };
+
+    if !ServerManifest::manifest_path(&server_dir).exists() {
+        bail!(
+            "No server manifest found in '{}'. Are you sure this is a valid server directory?",
+            server_dir.display()
+        );
+    }
 
     let server_dir = server_dir
         .canonicalize()

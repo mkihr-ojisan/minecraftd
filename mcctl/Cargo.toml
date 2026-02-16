@@ -9,7 +9,8 @@ clap = { version = "4.5.57", features = ["derive"] }
 indicatif = "0.18.3"
 inquire = "0.9.3"
 mcctl-protocol = { version = "0.1.0", path = "../mcctl-protocol" }
+minecraftd-manifest = { version = "0.1.0", path = "../minecraftd-manifest" }
 nix = { version = "0.31.1", features = ["term"] }
 prost = "0.14.3"
 terminal_size = "0.4.3"
-tokio = { version = "1.49.0", features = ["rt", "macros", "net", "sync", "io-util", "io-std", "signal"] }
+tokio = { version = "1.49.0", features = ["rt", "macros", "net", "sync", "io-util", "io-std", "signal", "fs"] }
