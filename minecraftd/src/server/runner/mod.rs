@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
+use minecraftd_manifest::{Connection, ServerManifest};
 use pty_process::Pty;
 use rand::distr::{Alphanumeric, SampleString};
 use tokio::{process::Child, sync::Mutex, task::JoinSet, time::timeout};
@@ -14,7 +15,7 @@ use uuid::Uuid;
 use crate::{
     port::Port,
     server::{
-        config::{Connection, ServerConfig},
+        java_runtime::JavaRuntimeExt,
         runner::{
             auto_start::{
                 add_auto_start_directory, get_auto_start_directories, remove_auto_start_directory,
@@ -53,7 +54,7 @@ struct RunningServer {
     id: Uuid,
     server_dir: PathBuf,
     status: ObservableValue<ServerStatus>,
-    config: ServerConfig,
+    manifest: ServerManifest,
     terminal_in: tokio::sync::mpsc::Sender<TerminalInput>,
     terminal_out: tokio::sync::broadcast::Sender<TerminalOutput>,
     server_port: ServerPort,
@@ -157,7 +158,7 @@ pub async fn get_running_servers() -> Vec<RunningServerInfo> {
 
         servers.push(RunningServerInfo {
             server_dir: server.server_dir.clone(),
-            name: server.config.name.clone(),
+            name: server.manifest.name.clone(),
             status: server.status.get(),
             server_port: server.server_port.port(),
             players,
@@ -181,7 +182,7 @@ pub async fn stop_server(server_dir: &Path) -> anyhow::Result<()> {
         };
         id = server.id;
 
-        if server.config.auto_start {
+        if server.manifest.auto_start {
             info!(
                 "Removing server at '{}' from auto-start list",
                 server_dir.display()
@@ -313,10 +314,10 @@ async fn do_start_server(
     };
     debug!("Assigned server ID: {}", id);
 
-    let config = ServerConfig::load(&server_dir).await?;
-    debug!("Loaded server config: {:?}", config);
+    let manifest = ServerManifest::load(&server_dir).await?;
+    debug!("Loaded server manifest: {:?}", manifest);
 
-    if let Connection::Proxy { hostname } = &config.connection
+    if let Connection::Proxy { hostname } = &manifest.connection
         && runner
             .running_servers
             .get_id_by_hostname(hostname)
@@ -325,7 +326,7 @@ async fn do_start_server(
         bail!("A server with hostname '{}' is already running", hostname);
     }
 
-    if config.auto_start {
+    if manifest.auto_start {
         add_auto_start_directory(&server_dir).await?;
         info!(
             "Auto-start is enabled for server at '{}'",
@@ -346,13 +347,13 @@ async fn do_start_server(
         }
     }
 
-    let (server_port, rcon_port, rcon_password) = prepare_server(&server_dir, &config).await?;
+    let (server_port, rcon_port, rcon_password) = prepare_server(&server_dir, &manifest).await?;
 
-    config.java_runtime.prepare().await?;
+    manifest.java_runtime.prepare().await?;
 
-    let java_path = config.java_runtime.java_path();
+    let java_path = manifest.java_runtime.java_path();
     let command_args_str = command_substitute_placeholders(
-        &config.command,
+        &manifest.command,
         java_path.to_str().context("java_path is not valid UTF-8")?,
     );
     let (pty, child) = start_command_with_pty(&command_args_str, &server_dir)?;
@@ -372,7 +373,7 @@ async fn do_start_server(
         id,
         server_dir,
         status: ObservableValue::new(ServerStatus::Starting { restarting }),
-        config,
+        manifest,
         terminal_in: term_in_tx,
         terminal_out: term_out_tx,
         server_port,
@@ -387,11 +388,11 @@ async fn do_start_server(
 
 async fn prepare_server(
     server_dir: &Path,
-    config: &ServerConfig,
+    manifest: &ServerManifest,
 ) -> anyhow::Result<(ServerPort, Port, String)> {
     let mut server_properties = ServerProperties::load(server_dir).await.unwrap_or_default();
 
-    let server_port = if let Connection::Proxy { .. } = &config.connection {
+    let server_port = if let Connection::Proxy { .. } = &manifest.connection {
         let server_port = Port::acquire()?;
         server_properties.set("server-port", server_port.port().to_string());
         ServerPort::Proxy(server_port)

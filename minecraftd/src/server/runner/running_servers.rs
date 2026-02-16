@@ -3,9 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use minecraftd_manifest::Connection;
 use uuid::Uuid;
 
-use crate::server::{config::Connection, runner::RunningServer};
+use crate::server::runner::RunningServer;
 
 pub struct RunningServers {
     servers: HashMap<Uuid, RunningServer>,
@@ -23,7 +24,7 @@ impl RunningServers {
     }
 
     pub fn insert(&mut self, server: RunningServer) {
-        if let Connection::Proxy { hostname } = &server.config.connection {
+        if let Connection::Proxy { hostname } = &server.manifest.connection {
             self.hostname_to_id.insert(hostname.to_string(), server.id);
         }
         self.server_dir_to_id
@@ -33,7 +34,7 @@ impl RunningServers {
 
     pub fn remove(&mut self, id: &Uuid) -> Option<RunningServer> {
         let server = self.servers.remove(id)?;
-        if let Connection::Proxy { hostname } = &server.config.connection {
+        if let Connection::Proxy { hostname } = &server.manifest.connection {
             self.hostname_to_id.remove(hostname);
         }
         self.server_dir_to_id.remove(&server.server_dir);

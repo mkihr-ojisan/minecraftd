@@ -1220,6 +1220,7 @@ dependencies = [
  "mcctl-protocol",
  "minecraft-protocol",
  "minecraft-rcon",
+ "minecraftd-manifest",
  "mojang-piston-api",
  "nix",
  "pretty_env_logger",
@@ -1235,6 +1236,16 @@ dependencies = [
  "sha2",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "minecraftd-manifest"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_yml",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

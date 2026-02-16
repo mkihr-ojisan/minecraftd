@@ -1,8 +1,9 @@
 use std::path::Path;
 
 use anyhow::bail;
+use minecraftd_manifest::Connection;
 
-use crate::server::{config::Connection, implementations::get_server_implementation};
+use crate::server::implementations::get_server_implementation;
 
 pub mod config;
 mod implementations;
@@ -52,14 +53,14 @@ pub async fn create_server(
     tokio::fs::create_dir_all(server_dir).await?;
 
     let result: anyhow::Result<()> = async {
-        let mut default_config = implementation
+        let mut default_manifest = implementation
             .create_server(version, build, server_dir)
             .await?;
 
-        default_config.name = name.to_string();
-        default_config.connection = connection;
+        default_manifest.name = name.to_string();
+        default_manifest.connection = connection;
 
-        default_config.save(server_dir).await?;
+        default_manifest.save(server_dir).await?;
 
         Ok(())
     }

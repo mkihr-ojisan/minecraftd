@@ -1,13 +1,12 @@
 use std::path::Path;
 
 use anyhow::{Context, bail};
+use minecraftd_manifest::{JavaRuntime, ServerManifest};
 use sha1::Digest;
 use sha2::Sha256;
 
 use crate::{
-    server::{
-        config::ServerConfig, implementations::ServerImplementation, java_runtime::JavaRuntime,
-    },
+    server::implementations::ServerImplementation,
     util::{BoxedFuture, lazy_init_http_client::LazyInitHttpClient},
 };
 
@@ -43,7 +42,7 @@ impl ServerImplementation for Paper {
         version: &'a str,
         build_str: &'a str,
         server_dir: &'a Path,
-    ) -> BoxedFuture<'a, anyhow::Result<ServerConfig>> {
+    ) -> BoxedFuture<'a, anyhow::Result<ServerManifest>> {
         Box::pin(async move {
             let build_num = build_str.parse::<u32>().context("Invalid build number")?;
 
@@ -99,14 +98,14 @@ impl ServerImplementation for Paper {
                     .context("Java version info not found in vanilla manifest")?
                     .component;
 
-            let default_config = ServerConfig::default(
+            let default_manifest = ServerManifest::default(
                 "paper",
                 version,
                 build_str,
                 JavaRuntime::Mojang { name: java_runtime },
             );
 
-            Ok(default_config)
+            Ok(default_manifest)
         })
     }
 }

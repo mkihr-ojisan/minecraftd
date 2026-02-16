@@ -1,10 +1,9 @@
 use anyhow::{Context, bail};
+use minecraftd_manifest::{JavaRuntime, ServerManifest};
 use sha1::{Digest, Sha1};
 
 use crate::{
-    server::{
-        config::ServerConfig, implementations::ServerImplementation, java_runtime::JavaRuntime,
-    },
+    server::implementations::ServerImplementation,
     util::{BoxedFuture, lazy_init_http_client::LazyInitHttpClient},
 };
 
@@ -44,7 +43,7 @@ impl ServerImplementation for Vanilla {
         version: &'a str,
         _build: &'a str,
         server_dir: &'a std::path::Path,
-    ) -> BoxedFuture<'a, anyhow::Result<ServerConfig>> {
+    ) -> BoxedFuture<'a, anyhow::Result<ServerManifest>> {
         Box::pin(async move {
             let version_manifest =
                 mojang_piston_api::minecraft::version_manifest::get_version_manifest()
@@ -91,7 +90,7 @@ impl ServerImplementation for Vanilla {
                 .await
                 .context("Failed to write eula.txt")?;
 
-            let default_config = ServerConfig::default(
+            let default_manifest = ServerManifest::default(
                 "vanilla",
                 version,
                 version,
@@ -105,7 +104,7 @@ impl ServerImplementation for Vanilla {
                 },
             );
 
-            Ok(default_config)
+            Ok(default_manifest)
         })
     }
 }

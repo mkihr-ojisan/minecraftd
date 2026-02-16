@@ -1,23 +1,22 @@
 use std::{borrow::Cow, path::PathBuf};
 
 use anyhow::Context;
+use minecraftd_manifest::JavaRuntime;
 use mojang_piston_api::java_runtime::manifest::File;
-use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
 use crate::util::lazy_init_http_client::LazyInitHttpClient;
 
 static CLIENT: LazyInitHttpClient = LazyInitHttpClient::new();
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum JavaRuntime {
-    Mojang { name: String },
-    Custom { java_home: PathBuf },
+pub trait JavaRuntimeExt {
+    fn java_home(&self) -> PathBuf;
+    fn java_path(&self) -> PathBuf;
+    async fn prepare(&self) -> anyhow::Result<()>;
 }
 
-impl JavaRuntime {
-    pub fn java_home(&self) -> PathBuf {
+impl JavaRuntimeExt for JavaRuntime {
+    fn java_home(&self) -> PathBuf {
         match self {
             JavaRuntime::Mojang { name } => {
                 let mut path = dirs::data_dir().expect("Failed to get data directory");
@@ -30,14 +29,14 @@ impl JavaRuntime {
         }
     }
 
-    pub fn java_path(&self) -> PathBuf {
+    fn java_path(&self) -> PathBuf {
         let mut java_home = self.java_home();
         java_home.push("bin");
         java_home.push("java");
         java_home
     }
 
-    pub async fn prepare(&self) -> anyhow::Result<()> {
+    async fn prepare(&self) -> anyhow::Result<()> {
         match self {
             JavaRuntime::Mojang { name } => {
                 if self.java_path().exists() {

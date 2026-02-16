@@ -209,7 +209,7 @@ After running `mcctl create`, the server directory will contain at least:
 
 - `server.jar`
 - `eula.txt` (with `eula=true`)
-- `minecraftd.yaml` (minecraftd config)
+- `minecraftd.yaml` (minecraftd manifest)
 
 On startup, `server.properties` is created/updated with:
 
@@ -218,7 +218,7 @@ On startup, `server.properties` is created/updated with:
 - `rcon.password` (generated randomly if not already set)
 - `server-port` (allocated automatically when using `proxy` mode)
 
-## `minecraftd.yaml` (Configuration)
+## `minecraftd.yaml` (Manifest)
 
 `minecraftd.yaml` is YAML. Common fields:
 

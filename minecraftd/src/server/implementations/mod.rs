@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use crate::{server::config::ServerConfig, util::BoxedFuture};
+use minecraftd_manifest::ServerManifest;
+
+use crate::util::BoxedFuture;
 
 pub mod paper;
 pub mod vanilla;
@@ -14,7 +16,7 @@ pub trait ServerImplementation: Send + Sync {
         version: &'a str,
         build: &'a str,
         server_dir: &'a Path,
-    ) -> BoxedFuture<'a, anyhow::Result<ServerConfig>>;
+    ) -> BoxedFuture<'a, anyhow::Result<ServerManifest>>;
 }
 
 pub const SERVER_IMPLEMENTATIONS: &[&dyn ServerImplementation] =

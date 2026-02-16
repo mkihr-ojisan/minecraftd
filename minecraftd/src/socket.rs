@@ -2,10 +2,10 @@ use std::path::Path;
 
 use anyhow::{Context, bail};
 use mcctl_protocol::*;
+use minecraftd_manifest::Connection;
 
 use crate::server::{
     self,
-    config::Connection,
     runner::{TerminalReader, TerminalWriter},
 };
 
