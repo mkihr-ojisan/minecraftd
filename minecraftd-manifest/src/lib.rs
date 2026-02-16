@@ -12,6 +12,10 @@ pub struct ServerManifest {
     pub server_implementation: String,
     pub version: String,
     pub build: String,
+    #[serde(
+        serialize_with = "serialize_command",
+        deserialize_with = "deserialize_command"
+    )]
     pub command: Vec<OsString>,
     pub java_runtime: JavaRuntime,
     #[serde(default)]
@@ -90,4 +94,32 @@ impl ServerManifest {
         tokio::fs::write(&manifest_path, manifest_data).await?;
         Ok(())
     }
+}
+
+fn serialize_command<S>(command: &Vec<OsString>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let mut command_strs = Vec::<String>::new();
+
+    for arg in command {
+        match arg.to_str() {
+            Some(s) => command_strs.push(s.to_string()),
+            None => {
+                return Err(serde::ser::Error::custom(format!(
+                    "Command argument '{arg:?}' is not valid UTF-8 and cannot be serialized"
+                )));
+            }
+        }
+    }
+
+    command_strs.serialize(serializer)
+}
+
+fn deserialize_command<'de, D>(deserializer: D) -> Result<Vec<OsString>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let command_strs: Vec<String> = Vec::deserialize(deserializer)?;
+    Ok(command_strs.into_iter().map(OsString::from).collect())
 }
