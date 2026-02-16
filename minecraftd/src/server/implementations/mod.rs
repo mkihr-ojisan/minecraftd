@@ -39,11 +39,11 @@ pub trait ServerImplementation: Send + Sync {
             let mut cache_path = dirs::data_dir()
                 .context("Could not determine data directory for caching server jars")?;
             cache_path.push("minecraftd");
-            cache_path.push("server_jars");
+            cache_path.push("versions");
             cache_path.push(self.name());
             cache_path.push(version);
             cache_path.push(build);
-            cache_path.set_extension("jar");
+            cache_path.push("server.jar");
 
             if cache_path.exists() {
                 return Ok(cache_path);
