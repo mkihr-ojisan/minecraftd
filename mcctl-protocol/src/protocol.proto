@@ -13,6 +13,7 @@ message Request {
     GetRunningServersRequest get_running_servers_request = 9;
     WaitServerReadyRequest wait_server_ready_request = 10;
     RestartServerRequest restart_server_request = 11;
+    UpdateServerRequest update_server_request = 12;
   }
 }
 
@@ -23,6 +24,7 @@ message Response {
     GetVersionsResponse get_versions_response = 3;
     GetBuildsResponse get_builds_response = 4;
     GetRunningServersResponse get_running_servers_response = 10;
+    UpdateServerResponse update_server_response = 11;
   }
 }
 
@@ -131,4 +133,22 @@ message WaitServerReadyRequest {
 
 message RestartServerRequest {
   string server_dir = 1;
+}
+
+message UpdateServerRequest {
+  string server_dir = 1;
+  UpdateType update_type = 2;
+}
+
+enum UpdateType {
+  STABLE = 0;
+  LATEST = 1;
+}
+
+message UpdateServerResponse {
+  bool updated = 1;
+  optional string old_version = 2;
+  optional string old_build = 3;
+  optional string new_version = 4;
+  optional string new_build = 5;
 }

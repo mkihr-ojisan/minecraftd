@@ -26,7 +26,7 @@ pub struct Version {
     pub release_time: DateTime<FixedOffset>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VersionType {
     Release,

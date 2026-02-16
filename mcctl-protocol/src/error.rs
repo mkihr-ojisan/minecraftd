@@ -21,4 +21,6 @@ pub enum Error {
     },
     #[error("Invalid connection type")]
     InvalidConnectionType,
+    #[error("Invalid update type")]
+    InvalidUpdateType,
 }

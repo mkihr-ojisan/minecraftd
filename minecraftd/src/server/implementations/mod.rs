@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use bytes::Bytes;
 use minecraftd_manifest::JavaRuntime;
 use tokio::sync::Mutex;
@@ -14,8 +14,8 @@ static SERVER_JAR_CACHE_LOCK: Mutex<()> = Mutex::const_new(());
 
 pub trait ServerImplementation: Send + Sync {
     fn name(&self) -> &'static str;
-    fn get_versions<'a>(&'a self) -> BoxedFuture<'a, anyhow::Result<Vec<String>>>;
-    fn get_builds<'a>(&'a self, version: &'a str) -> BoxedFuture<'a, anyhow::Result<Vec<String>>>;
+    fn get_versions<'a>(&'a self) -> BoxedFuture<'a, anyhow::Result<Vec<Version>>>;
+    fn get_builds<'a>(&'a self, version: &'a str) -> BoxedFuture<'a, anyhow::Result<Vec<Build>>>;
     fn default_java_runtime<'a>(
         &'a self,
         version: &'a str,
@@ -72,6 +72,45 @@ pub trait ServerImplementation: Send + Sync {
             Ok(cache_path)
         })
     }
+
+    fn get_latest_version_build<'a>(
+        &'a self,
+        stable: bool,
+    ) -> BoxedFuture<'a, anyhow::Result<(Version, Build)>> {
+        Box::pin(async move {
+            let versions = self.get_versions().await?;
+
+            for version in versions.into_iter() {
+                if stable && !version.is_stable {
+                    continue;
+                }
+
+                let builds = self.get_builds(&version.name).await?;
+                if let Some(build) = builds.into_iter().next()
+                    && (!stable || build.is_stable)
+                {
+                    return Ok((version, build));
+                }
+            }
+
+            bail!(
+                "Could not find any versions or builds for server implementation '{}'",
+                self.name()
+            )
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Version {
+    pub name: String,
+    pub is_stable: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct Build {
+    pub name: String,
+    pub is_stable: bool,
 }
 
 pub const SERVER_IMPLEMENTATIONS: &[&dyn ServerImplementation] =

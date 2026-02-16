@@ -5,7 +5,7 @@ use sha1::Digest;
 use sha2::Sha256;
 
 use crate::{
-    server::implementations::ServerImplementation,
+    server::implementations::{Build, ServerImplementation, Version},
     util::{BoxedFuture, lazy_init_http_client::LazyInitHttpClient},
 };
 
@@ -22,17 +22,32 @@ impl ServerImplementation for Paper {
         "paper"
     }
 
-    fn get_versions(&self) -> BoxedFuture<'static, anyhow::Result<Vec<String>>> {
+    fn get_versions(&self) -> BoxedFuture<'static, anyhow::Result<Vec<Version>>> {
         Box::pin(async move {
             let project = api::get_project(&CLIENT, PROJECT_NAME).await?;
-            Ok(project.versions.into_iter().flat_map(|(_, v)| v).collect())
+            Ok(project
+                .versions
+                .into_iter()
+                .flat_map(|(_, v)| v)
+                .map(|v| Version {
+                    name: v,
+                    is_stable: true,
+                })
+                .collect())
         })
     }
 
-    fn get_builds<'a>(&self, version: &'a str) -> BoxedFuture<'a, anyhow::Result<Vec<String>>> {
+    fn get_builds<'a>(&self, version: &'a str) -> BoxedFuture<'a, anyhow::Result<Vec<Build>>> {
         Box::pin(async move {
             let builds = api::get_builds(&CLIENT, PROJECT_NAME, version).await?;
-            Ok(builds.into_iter().map(|b| b.id.to_string()).collect())
+            Ok(builds
+                .into_iter()
+                .map(|b| Build {
+                    name: b.id.to_string(),
+                    is_stable: b.channel == api::BuildChannel::Stable
+                        || b.channel == api::BuildChannel::Recommended,
+                })
+                .collect())
         })
     }
 

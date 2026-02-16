@@ -264,6 +264,27 @@ impl Client {
             }),
         }
     }
+
+    pub async fn update_server(
+        &mut self,
+        server_dir: impl Into<String>,
+        update_type: UpdateType,
+    ) -> Result<UpdateServerResponse, Error> {
+        let response_payload = self
+            .send_request(RequestPayload::UpdateServerRequest(UpdateServerRequest {
+                server_dir: server_dir.into(),
+                update_type: update_type as i32,
+            }))
+            .await?;
+
+        match response_payload {
+            Some(ResponsePayload::UpdateServerResponse(update_result)) => Ok(update_result),
+            _ => Err(Error::UnexpectedResponseType {
+                expected: "UpdateServerResponse",
+                actual: format!("{response_payload:?}"),
+            }),
+        }
+    }
 }
 
 pub struct TerminalReader {

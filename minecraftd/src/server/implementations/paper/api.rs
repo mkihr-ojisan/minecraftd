@@ -61,7 +61,17 @@ pub async fn get_project(client: &Client, project: &str) -> anyhow::Result<GetPr
 #[derive(Deserialize)]
 pub struct Build {
     pub id: u32,
+    pub channel: BuildChannel,
     pub downloads: HashMap<String, Download>,
+}
+
+#[derive(PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum BuildChannel {
+    Alpha,
+    Beta,
+    Stable,
+    Recommended,
 }
 
 #[derive(Deserialize)]
@@ -80,7 +90,9 @@ pub async fn get_builds(
     project: &str,
     version: &str,
 ) -> anyhow::Result<Vec<Build>> {
-    let url = format!("https://fill.papermc.io/v3/projects/{project}/versions/{version}/builds");
+    let url = format!(
+        "https://fill.papermc.io/v3/projects/{project}/versions/{version}/builds?channel=ALPHA&channel=BETA&channel=STABLE&channel=RECOMMENDED"
+    );
     let resp = client
         .get(url)
         .send()

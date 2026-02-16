@@ -24,7 +24,12 @@ pub async fn get_server_versions(server_implementation: &str) -> anyhow::Result<
         bail!("Unknown server implementation '{}'", server_implementation);
     };
 
-    implementation.get_versions().await
+    Ok(implementation
+        .get_versions()
+        .await?
+        .into_iter()
+        .map(|v| v.name)
+        .collect())
 }
 
 pub async fn get_server_builds(
@@ -35,7 +40,12 @@ pub async fn get_server_builds(
         bail!("Unknown server implementation '{}'", server_implementation);
     };
 
-    implementation.get_builds(version).await
+    Ok(implementation
+        .get_builds(version)
+        .await?
+        .into_iter()
+        .map(|b| b.name)
+        .collect())
 }
 
 pub async fn create_server(
@@ -80,4 +90,74 @@ pub async fn create_server(
         .context("Failed to save server manifest")?;
 
     Ok(())
+}
+
+pub enum UpdateType {
+    Stable,
+    Latest,
+}
+
+pub enum UpdateServerResult {
+    NoUpdateNeeded,
+    Updated {
+        old_version: String,
+        old_build: String,
+        new_version: String,
+        new_build: String,
+    },
+}
+
+pub async fn update_server(
+    server_dir: &Path,
+    update_type: UpdateType,
+) -> anyhow::Result<UpdateServerResult> {
+    if runner::is_server_running(server_dir).await? {
+        bail!("Cannot update server while it is running");
+    }
+
+    let mut manifest = ServerManifest::load(server_dir)
+        .await
+        .context("Failed to load server manifest")?;
+
+    let Some(implementation) = get_server_implementation(&manifest.server_implementation) else {
+        bail!(
+            "Unknown server implementation '{}'",
+            manifest.server_implementation
+        );
+    };
+
+    let old_version = manifest.version.clone();
+    let old_build = manifest.build.clone();
+
+    let (latest_version, latest_build) = implementation
+        .get_latest_version_build(match update_type {
+            UpdateType::Stable => true,
+            UpdateType::Latest => false,
+        })
+        .await
+        .context("Failed to get latest version and build for server implementation")?;
+
+    if old_version == latest_version.name && old_build == latest_build.name {
+        return Ok(UpdateServerResult::NoUpdateNeeded);
+    }
+
+    manifest.version = latest_version.name.clone();
+    manifest.build = latest_build.name.clone();
+
+    let _server_jar_path = implementation
+        .get_server_jar_path(server_dir, &manifest.version, &manifest.build)
+        .await
+        .context("Failed to prepare server jar for updated version")?;
+
+    manifest
+        .save(server_dir)
+        .await
+        .context("Failed to save updated server manifest")?;
+
+    Ok(UpdateServerResult::Updated {
+        old_version,
+        old_build,
+        new_version: manifest.version,
+        new_build: manifest.build,
+    })
 }

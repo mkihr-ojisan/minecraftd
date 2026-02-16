@@ -1,10 +1,11 @@
 use anyhow::{Context, bail};
 use bytes::Bytes;
 use minecraftd_manifest::JavaRuntime;
+use mojang_piston_api::minecraft::version_manifest::VersionType;
 use sha1::{Digest, Sha1};
 
 use crate::{
-    server::implementations::ServerImplementation,
+    server::implementations::{Build, ServerImplementation, Version},
     util::{BoxedFuture, lazy_init_http_client::LazyInitHttpClient},
 };
 
@@ -17,7 +18,7 @@ impl ServerImplementation for Vanilla {
         "vanilla"
     }
 
-    fn get_versions(&self) -> BoxedFuture<'static, anyhow::Result<Vec<String>>> {
+    fn get_versions(&self) -> BoxedFuture<'static, anyhow::Result<Vec<Version>>> {
         Box::pin(async move {
             let version_manifest = crate::util::cached_mojang_piston_api::get_version_manifest()
                 .await
@@ -26,15 +27,31 @@ impl ServerImplementation for Vanilla {
             Ok(version_manifest
                 .versions
                 .into_iter()
-                .map(|v| v.id)
+                .map(|v| Version {
+                    name: v.id,
+                    is_stable: v.type_ == VersionType::Release,
+                })
                 .collect::<Vec<_>>())
         })
     }
 
-    fn get_builds<'a>(&self, version: &'a str) -> BoxedFuture<'a, anyhow::Result<Vec<String>>> {
+    fn get_builds<'a>(&self, version: &'a str) -> BoxedFuture<'a, anyhow::Result<Vec<Build>>> {
         Box::pin(async move {
+            let version_manifest = crate::util::cached_mojang_piston_api::get_version_manifest()
+                .await
+                .context("Failed to fetch version manifest")?;
+
+            let version_info = version_manifest
+                .versions
+                .into_iter()
+                .find(|v| v.id == version)
+                .ok_or_else(|| anyhow::anyhow!("Version '{}' not found", version))?;
+
             // Vanilla does not have builds, so we just return the version as the only "build"
-            Ok(vec![version.to_string()])
+            Ok(vec![Build {
+                name: version_info.id,
+                is_stable: version_info.type_ == VersionType::Release,
+            }])
         })
     }
 

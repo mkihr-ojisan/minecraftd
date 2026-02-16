@@ -42,6 +42,10 @@ where
     fn get_running_servers() -> impl Future<Output = Result<Vec<RunningServer>, E>> + Send;
     fn wait_ready(server_dir: &Path) -> impl Future<Output = Result<(), E>> + Send;
     fn restart_server(server_dir: &Path) -> impl Future<Output = Result<(), E>> + Send;
+    fn update_server(
+        server_dir: &Path,
+        update_type: UpdateType,
+    ) -> impl Future<Output = Result<UpdateServerResponse, E>> + Send;
 }
 
 pub trait TerminalReader<E>: Send + 'static
@@ -288,6 +292,18 @@ where
             H::restart_server(Path::new(&req.server_dir)).await?;
 
             Ok(HandleRequestResult::Response(None))
+        }
+        RequestPayload::UpdateServerRequest(req) => {
+            let update_result = H::update_server(
+                Path::new(&req.server_dir),
+                UpdateType::try_from(req.update_type)
+                    .map_err(|_| HandleRequestError::Error(Error::InvalidUpdateType))?,
+            )
+            .await?;
+
+            Ok(HandleRequestResult::Response(Some(
+                ResponsePayload::UpdateServerResponse(update_result),
+            )))
         }
     }
 }

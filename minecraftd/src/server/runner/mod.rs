@@ -134,6 +134,14 @@ pub async fn get_server_port(id: Uuid) -> Option<u16> {
         .map(|s| s.server_port.port())
 }
 
+pub async fn is_server_running(server_dir: &Path) -> anyhow::Result<bool> {
+    let runner = RUNNER.lock().await;
+    Ok(runner
+        .running_servers
+        .get_id_by_server_dir(server_dir)?
+        .is_some())
+}
+
 pub async fn get_running_servers() -> Vec<RunningServerInfo> {
     let runner = RUNNER.lock().await;
     let mut servers = Vec::new();

@@ -157,6 +157,45 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
 
         Ok(())
     }
+
+    async fn update_server(
+        server_dir: &Path,
+        update_type: UpdateType,
+    ) -> anyhow::Result<UpdateServerResponse> {
+        let server_dir = Path::new(&server_dir);
+        if !server_dir.is_absolute() {
+            bail!("server_dir must be absolute");
+        }
+
+        let update_type = match update_type {
+            UpdateType::Stable => server::UpdateType::Stable,
+            UpdateType::Latest => server::UpdateType::Latest,
+        };
+
+        let update_result = server::update_server(server_dir, update_type).await?;
+
+        Ok(match update_result {
+            server::UpdateServerResult::NoUpdateNeeded => UpdateServerResponse {
+                updated: false,
+                old_version: None,
+                old_build: None,
+                new_version: None,
+                new_build: None,
+            },
+            server::UpdateServerResult::Updated {
+                old_version,
+                old_build,
+                new_version,
+                new_build,
+            } => UpdateServerResponse {
+                updated: true,
+                old_version: Some(old_version),
+                old_build: Some(old_build),
+                new_version: Some(new_version),
+                new_build: Some(new_build),
+            },
+        })
+    }
 }
 
 pub async fn start_server() -> anyhow::Result<()> {

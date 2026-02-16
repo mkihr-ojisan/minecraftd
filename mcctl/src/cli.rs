@@ -20,6 +20,8 @@ pub enum Subcommand {
     Kill(KillArgs),
     /// Attach to a server's console
     Attach(AttachArgs),
+    /// Update a server to the latest version
+    Update(UpdateArgs),
     /// List all running servers
     Ps,
 }
@@ -76,4 +78,21 @@ pub struct KillArgs {
 pub struct AttachArgs {
     /// The directory of the server to attach to. If not specified, current directory will be used.
     pub server_dir: Option<PathBuf>,
+}
+
+#[derive(clap::Args)]
+pub struct UpdateArgs {
+    /// The directory of the server to update. If not specified, current directory will be used.
+    pub server_dir: Option<PathBuf>,
+    /// The type of update to perform.
+    #[clap(short, long, default_value = "stable")]
+    pub update_type: UpdateType,
+}
+
+#[derive(Clone, clap::ValueEnum)]
+pub enum UpdateType {
+    /// Update to the latest stable version of the server.
+    Stable,
+    /// Update to the latest unstable version of the server (e.g. snapshots).
+    Latest,
 }
