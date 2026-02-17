@@ -245,7 +245,6 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
         .into_iter()
         .map(|m| ExtensionInfo {
             id: m.id,
-            r#type: type_ as i32,
             name: m.name,
         })
         .collect())
@@ -305,10 +304,19 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
                 .into_iter()
                 .map(|m| ExtensionInfo {
                     id: m.id,
-                    r#type: type_ as i32,
                     name: m.name,
                 })
                 .collect(),
+        })
+    }
+
+    async fn get_extension_id_by_url(url: &str) -> anyhow::Result<GetExtensionIdByUrlResponse> {
+        let (provider, info) = server::get_extension_info_by_url(url).await?;
+
+        Ok(GetExtensionIdByUrlResponse {
+            r#type: info.type_ as i32,
+            provider: provider.to_string(),
+            extension_id: info.id,
         })
     }
 }

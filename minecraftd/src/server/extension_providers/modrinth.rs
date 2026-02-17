@@ -1,11 +1,12 @@
 use std::sync::LazyLock;
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use minecraftd_manifest::ExtensionType;
 use modrinth_api::{
     apis::configuration::Configuration,
     models::{version::VersionType, version_dependency::DependencyType},
 };
+use reqwest::Url;
 
 use crate::{
     server::extension_providers::{
@@ -59,6 +60,7 @@ impl ExtensionProvider for Modrinth {
                 .into_iter()
                 .map(|hit| ExtensionInfo {
                     id: hit.project_id,
+                    type_,
                     name: hit.title,
                 })
                 .collect::<Vec<_>>())
@@ -67,7 +69,7 @@ impl ExtensionProvider for Modrinth {
 
     fn get_extension_info<'a>(
         &'a self,
-        _type: ExtensionType,
+        type_: ExtensionType,
         extension_id: &'a str,
     ) -> BoxedFuture<'a, anyhow::Result<ExtensionInfo>> {
         Box::pin(async move {
@@ -76,6 +78,7 @@ impl ExtensionProvider for Modrinth {
 
             Ok(ExtensionInfo {
                 id: project.id,
+                type_,
                 name: project.title,
             })
         })
@@ -187,6 +190,43 @@ impl ExtensionProvider for Modrinth {
             let bytes = response.bytes().await?;
 
             Ok(bytes)
+        })
+    }
+
+    fn get_extension_info_by_url<'a>(
+        &'a self,
+        url: &'a str,
+    ) -> BoxedFuture<'a, anyhow::Result<ExtensionInfo>> {
+        Box::pin(async move {
+            let url = Url::parse(url).context("Invalid URL")?;
+
+            if url.domain() != Some("modrinth.com") {
+                bail!("URL is not from modrinth.com");
+            }
+
+            let mut path_segments = url.path_segments().context("URL has no path segments")?;
+
+            let project_type = path_segments
+                .next()
+                .context("URL has no project type segment")?;
+
+            let extension_type = match project_type {
+                "mod" => ExtensionType::Mod,
+                "plugin" => ExtensionType::Plugin,
+                _ => bail!("Invalid project type in URL"),
+            };
+
+            let slug = path_segments
+                .next()
+                .context("URL has no extension slug segment")?;
+
+            let project = modrinth_api::apis::projects_api::get_project(&CONFIG, slug).await?;
+
+            Ok(ExtensionInfo {
+                id: project.id,
+                type_: extension_type,
+                name: project.title,
+            })
         })
     }
 }

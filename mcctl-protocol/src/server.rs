@@ -68,6 +68,9 @@ where
         extension_version_id: &str,
         allow_incompatible_versions: bool,
     ) -> impl Future<Output = Result<AddExtensionResponse, E>> + Send;
+    fn get_extension_id_by_url(
+        url: &str,
+    ) -> impl Future<Output = Result<GetExtensionIdByUrlResponse, E>> + Send;
 }
 
 pub trait TerminalReader<E>: Send + 'static
@@ -404,6 +407,13 @@ where
 
             Ok(HandleRequestResult::Response(Some(
                 ResponsePayload::AddExtensionResponse(result),
+            )))
+        }
+        RequestPayload::GetExtensionIdByUrlRequest(req) => {
+            let result = H::get_extension_id_by_url(&req.url).await?;
+
+            Ok(HandleRequestResult::Response(Some(
+                ResponsePayload::GetExtensionIdByUrlResponse(result),
             )))
         }
     }

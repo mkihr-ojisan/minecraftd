@@ -4,7 +4,9 @@ use anyhow::{Context, bail};
 use minecraftd_manifest::{Connection, ExntensionEntry, ExtensionType, ServerManifest};
 
 use crate::server::{
-    extension_providers::{ExtensionInfo, ExtensionProvider, get_extension_provider},
+    extension_providers::{
+        EXTENSION_PROVIDERS, ExtensionInfo, ExtensionProvider, get_extension_provider,
+    },
     implementations::{Build, Version, get_server_implementation},
     java_runtime::JavaRuntimeExt,
 };
@@ -335,4 +337,14 @@ pub async fn add_extension(
         .context("Failed to save updated server manifest")?;
 
     Ok(AddExtensionResult { added_extensions })
+}
+
+pub async fn get_extension_info_by_url(url: &str) -> anyhow::Result<(&'static str, ExtensionInfo)> {
+    for provider in EXTENSION_PROVIDERS {
+        if let Ok(info) = provider.get_extension_info_by_url(url).await {
+            return Ok((provider.name(), info));
+        }
+    }
+
+    bail!("Could not find extension for URL: {url}");
 }

@@ -2,7 +2,7 @@ use std::{fmt::Display, path::Path, time::Duration};
 
 use anyhow::{Context, bail};
 use clap::Parser;
-use mcctl_protocol::{ConnectionType, ServerStatus, client::Client};
+use mcctl_protocol::{ConnectionType, ExtensionInfo, ExtensionType, ServerStatus, client::Client};
 use minecraftd_manifest::ServerManifest;
 use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
 use terminal_size::{Height, Width, terminal_size};
@@ -627,46 +627,64 @@ async fn add_extension(args: ExtensionsAddArgs) -> anyhow::Result<()> {
         .await
         .context("Failed to load server manifest")?;
 
-    let providers = client.get_extension_providers().await?;
-    let provider = inquire::Select::new("Extension provider:", providers).prompt()?;
+    let (provider, type_, extension) = if let Some(url) = args.url {
+        let result = client.get_extension_id_by_url(&url).await?;
 
-    let type_ = match inquire::Select::new("Extension type:", vec!["mod", "plugin"]).prompt()? {
-        "mod" => mcctl_protocol::ExtensionType::Mod,
-        "plugin" => mcctl_protocol::ExtensionType::Plugin,
-        _ => bail!("Invalid extension type"),
-    };
+        let type_ = ExtensionType::try_from(result.r#type).context("Invalid extension type")?;
 
-    let search_query = inquire::Text::new("Search query:").prompt()?;
-
-    let pb = indicatif::ProgressBar::new_spinner();
-    pb.set_message("Searching for extensions...");
-    pb.enable_steady_tick(Duration::from_millis(100));
-
-    let extensions = client
-        .search_extension(
-            &provider,
+        (
+            result.provider,
             type_,
-            &manifest.version,
-            &search_query,
-            args.allow_incompatible_versions,
+            ExtensionInfo {
+                id: result.extension_id,
+                name: url,
+            },
         )
-        .await
-        .context("Failed to search for extensions")?;
+    } else {
+        let providers = client.get_extension_providers().await?;
+        let provider = inquire::Select::new("Extension provider:", providers).prompt()?;
 
-    pb.finish_and_clear();
+        let type_ = match inquire::Select::new("Extension type:", vec!["mod", "plugin"]).prompt()? {
+            "mod" => mcctl_protocol::ExtensionType::Mod,
+            "plugin" => mcctl_protocol::ExtensionType::Plugin,
+            _ => bail!("Invalid extension type"),
+        };
 
-    struct ExtensionDisplay(mcctl_protocol::ExtensionInfo);
-    impl Display for ExtensionDisplay {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{}", self.0.name)
+        let search_query = inquire::Text::new("Search query:").prompt()?;
+
+        let pb = indicatif::ProgressBar::new_spinner();
+        pb.set_message("Searching for extensions...");
+        pb.enable_steady_tick(Duration::from_millis(100));
+
+        let extensions = client
+            .search_extension(
+                &provider,
+                type_,
+                &manifest.version,
+                &search_query,
+                args.allow_incompatible_versions,
+            )
+            .await
+            .context("Failed to search for extensions")?;
+
+        pb.finish_and_clear();
+
+        struct ExtensionDisplay(mcctl_protocol::ExtensionInfo);
+        impl Display for ExtensionDisplay {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.0.name)
+            }
         }
-    }
 
-    let extension = inquire::Select::new(
-        "Select a extension:",
-        extensions.into_iter().map(ExtensionDisplay).collect(),
-    )
-    .prompt()?;
+        let extension = inquire::Select::new(
+            "Select a extension:",
+            extensions.into_iter().map(ExtensionDisplay).collect(),
+        )
+        .prompt()?
+        .0;
+
+        (provider, type_, extension)
+    };
 
     let pb = indicatif::ProgressBar::new_spinner();
     pb.set_message("Fetching extension versions...");
@@ -677,7 +695,7 @@ async fn add_extension(args: ExtensionsAddArgs) -> anyhow::Result<()> {
             &provider,
             type_,
             &manifest.version,
-            &extension.0.id,
+            &extension.id,
             args.allow_incompatible_versions,
         )
         .await
@@ -726,7 +744,7 @@ async fn add_extension(args: ExtensionsAddArgs) -> anyhow::Result<()> {
             &server_dir,
             &provider,
             type_,
-            &extension.0.id,
+            &extension.id,
             &extension_version.0.id,
             args.allow_incompatible_versions,
         )

@@ -34,6 +34,7 @@ pub enum Subcommand {
 #[derive(clap::Args)]
 pub struct CreateArgs {
     /// The directory to create the server in. If not specified, current directory will be used.
+    #[arg(short = 'd', long)]
     pub server_dir: Option<PathBuf>,
     /// The name of the server.
     #[arg(short, long)]
@@ -58,36 +59,42 @@ pub struct CreateArgs {
 #[derive(clap::Args)]
 pub struct StartArgs {
     /// The directory of the server to start. If not specified, current directory will be used.
+    #[arg(short = 'd', long)]
     pub server_dir: Option<PathBuf>,
 }
 
 #[derive(clap::Args)]
 pub struct StopArgs {
     /// The directory of the server to stop. If not specified, current directory will be used.
+    #[arg(short = 'd', long)]
     pub server_dir: Option<PathBuf>,
 }
 
 #[derive(clap::Args)]
 pub struct RestartArgs {
     /// The directory of the server to restart. If not specified, current directory will be used.
+    #[arg(short = 'd', long)]
     pub server_dir: Option<PathBuf>,
 }
 
 #[derive(clap::Args)]
 pub struct KillArgs {
     /// The directory of the server to kill. If not specified, current directory will be used.
+    #[arg(short = 'd', long)]
     pub server_dir: Option<PathBuf>,
 }
 
 #[derive(clap::Args)]
 pub struct AttachArgs {
     /// The directory of the server to attach to. If not specified, current directory will be used.
+    #[arg(short = 'd', long)]
     pub server_dir: Option<PathBuf>,
 }
 
 #[derive(clap::Args)]
 pub struct UpdateArgs {
     /// The directory of the server to update. If not specified, current directory will be used.
+    #[arg(short = 'd', long)]
     pub server_dir: Option<PathBuf>,
     /// The type of update to perform.
     #[clap(short, long, default_value = "stable")]
@@ -111,8 +118,13 @@ pub enum Extensions {
 #[derive(clap::Args)]
 pub struct ExtensionsAddArgs {
     /// The directory of the server to add the mod/plugin to. If not specified, current directory will be used.
+    #[arg(short = 'd', long)]
     pub server_dir: Option<PathBuf>,
     /// Allow adding mods that are incompatible with the server version.
     #[arg(long)]
     pub allow_incompatible_versions: bool,
+    /// The URL of the mod/plugin to add.
+    /// Currently only Modrinth is supported.
+    /// If not specified, you will be prompted to search for mods/plugins.
+    pub url: Option<String>,
 }

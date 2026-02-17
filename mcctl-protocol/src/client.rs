@@ -394,6 +394,25 @@ impl Client {
             }),
         }
     }
+
+    pub async fn get_extension_id_by_url(
+        &mut self,
+        url: impl Into<String>,
+    ) -> Result<GetExtensionIdByUrlResponse, Error> {
+        let response_payload = self
+            .send_request(RequestPayload::GetExtensionIdByUrlRequest(
+                GetExtensionIdByUrlRequest { url: url.into() },
+            ))
+            .await?;
+
+        match response_payload {
+            Some(ResponsePayload::GetExtensionIdByUrlResponse(result)) => Ok(result),
+            _ => Err(Error::UnexpectedResponseType {
+                expected: "GetExtensionInfoByUrlResponse",
+                actual: format!("{response_payload:?}"),
+            }),
+        }
+    }
 }
 
 pub struct TerminalReader {

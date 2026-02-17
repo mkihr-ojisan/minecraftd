@@ -18,6 +18,7 @@ message Request {
     SearchExtensionRequest search_extension_request = 14;
     GetExtensionVersionsRequest get_extension_versions_request = 15;
     AddExtensionRequest add_extension_request = 16;
+    GetExtensionIdByUrlRequest get_extension_id_by_url_request = 17;
   }
 }
 
@@ -33,6 +34,7 @@ message Response {
     SearchExtensionResponse search_extension_response = 8;
     GetExtensionVersionsResponse get_extension_versions_response = 9;
     AddExtensionResponse add_extension_response = 10;
+    GetExtensionIdByUrlResponse get_extension_id_by_url_response = 11;
   }
 }
 
@@ -192,8 +194,7 @@ message SearchExtensionResponse {
 
 message ExtensionInfo {
   string id = 1;
-  ExtensionType type = 2;
-  string name = 3;
+  string name = 2;
 }
 
 enum ExtensionType {
@@ -230,4 +231,14 @@ message AddExtensionRequest {
 
 message AddExtensionResponse {
   repeated ExtensionInfo added_extensions = 1;
+}
+
+message GetExtensionIdByUrlRequest {
+  string url = 1;
+}
+
+message GetExtensionIdByUrlResponse {
+  string provider = 1;
+  ExtensionType type = 2;
+  string extension_id = 3;
 }

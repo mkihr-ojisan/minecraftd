@@ -41,6 +41,10 @@ pub trait ExtensionProvider: Send + Sync {
         extension_id: &'a str,
         extension_version_id: &'a str,
     ) -> BoxedFuture<'a, anyhow::Result<Bytes>>;
+    fn get_extension_info_by_url<'a>(
+        &'a self,
+        url: &'a str,
+    ) -> BoxedFuture<'a, anyhow::Result<ExtensionInfo>>;
 
     fn get_extension_jar_path<'a>(
         &'a self,
@@ -74,6 +78,7 @@ pub trait ExtensionProvider: Send + Sync {
 
 pub struct ExtensionInfo {
     pub id: String,
+    pub type_: ExtensionType,
     pub name: String,
 }
 
