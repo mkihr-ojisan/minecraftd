@@ -65,6 +65,8 @@ pub async fn start(bind_address: &str) -> anyhow::Result<()> {
 }
 
 async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
+    let peer_addr = socket.peer_addr().context("Failed to get client address")?;
+
     socket
         .set_nodelay(true)
         .context("Failed to set TCP_NODELAY")?;
@@ -91,6 +93,10 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
         bail!("Expected handshake packet");
     };
 
+    debug!(
+        "Received handshake packet from client {peer_addr} with server address '{server_address}' and intent '{intent:?}'"
+    );
+
     macro_rules! send_error_message {
         ($message:expr) => {
             if intent != ProtocolState::Status {
@@ -106,6 +112,7 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
                 info!("Disconnected: {}", $message);
                 return Ok(());
             } else {
+                debug!("Entering fallback server list ping handler for client {peer_addr} with error message: {}", $message);
                 fallback_server_list_ping_server(&mut raw_packet_stream, $message).await?;
                 return Ok(());
             }
@@ -137,6 +144,8 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
             send_error_message!("Server is not running or does not exist".to_string());
         }
     }
+
+    info!("Forwarding client {peer_addr} to server with ID {server_id}",);
 
     let Some(server_port) = runner::get_server_port(server_id).await else {
         send_error_message!("Server is not running or does not exist".to_string());
@@ -177,6 +186,8 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
         }
     }
 
+    info!("Client {peer_addr} disconnected");
+
     Ok(())
 }
 
@@ -185,12 +196,22 @@ async fn fallback_server_list_ping_server<S: AsyncRead + AsyncWrite + Unpin>(
     error_message: String,
 ) -> anyhow::Result<()> {
     loop {
-        let packet = socket.read_packet().await?;
+        let packet = match socket.read_packet().await {
+            Ok(packet) => packet,
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                debug!("Client closed connection during fallback server list ping handler");
+                return Ok(());
+            }
+            Err(e) => bail!("Failed to read packet from client: {:?}", e),
+        };
         let packet =
-            Packet::from_raw_packet(ProtocolState::Status, ProtocolBound::Serverbound, &packet)?;
+            Packet::from_raw_packet(ProtocolState::Status, ProtocolBound::Serverbound, &packet)
+                .context("Failed to parse packet from client")?;
 
         match packet {
             Packet::StatusRequest => {
+                trace!("Received status request packet from client, sending error response");
+
                 let response = Packet::StatusResponse {
                     json_response: Box::new(StatusResponse {
                         version: Version {
@@ -204,11 +225,19 @@ async fn fallback_server_list_ping_server<S: AsyncRead + AsyncWrite + Unpin>(
                         forge_data: None,
                     }),
                 };
-                socket.write_packet(&response.to_raw_packet()).await?;
+                socket
+                    .write_packet(&response.to_raw_packet())
+                    .await
+                    .context("Failed to write status response packet to client")?;
             }
             Packet::PingRequest { timestamp } => {
+                trace!("Received ping request packet from client, sending pong response");
+
                 let response = Packet::PongResponse { timestamp };
-                socket.write_packet(&response.to_raw_packet()).await?;
+                socket
+                    .write_packet(&response.to_raw_packet())
+                    .await
+                    .context("Failed to write pong response packet to client")?;
                 break;
             }
             _ => {
