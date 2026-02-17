@@ -1,7 +1,6 @@
-use std::{fmt::Display, path::Path};
+use std::path::Path;
 
 use prost::Message;
-use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
@@ -14,7 +13,7 @@ use crate::{
 
 pub trait RequestHandler<E, R, W>
 where
-    E: Display + Send,
+    E: Send + 'static,
     R: TerminalReader<E>,
     W: TerminalWriter<E>,
 {
@@ -46,26 +45,52 @@ where
         server_dir: &Path,
         update_type: UpdateType,
     ) -> impl Future<Output = Result<UpdateServerResponse, E>> + Send;
+    fn get_extension_providers() -> impl Future<Output = Result<Vec<String>, E>> + Send;
+    fn search_extension(
+        provider: &str,
+        type_: ExtensionType,
+        server_version: &str,
+        query: &str,
+        include_incompatible_versions: bool,
+    ) -> impl Future<Output = Result<Vec<ExtensionInfo>, E>> + Send;
+    fn get_extension_versions(
+        provider: &str,
+        type_: ExtensionType,
+        server_version: &str,
+        extension_id: &str,
+        include_incompatible_versions: bool,
+    ) -> impl Future<Output = Result<Vec<ExtensionVersionInfo>, E>> + Send;
+    fn add_extension(
+        server_dir: &Path,
+        provider: &str,
+        type_: ExtensionType,
+        extension_id: &str,
+        extension_version_id: &str,
+        allow_incompatible_versions: bool,
+    ) -> impl Future<Output = Result<AddExtensionResponse, E>> + Send;
 }
 
 pub trait TerminalReader<E>: Send + 'static
 where
-    E: Display + Send,
+    E: Send + 'static,
 {
     fn read(&mut self) -> impl Future<Output = Result<Option<TerminalOutput>, E>> + Send;
 }
 
 pub trait TerminalWriter<E>: Send + 'static
 where
-    E: Display + Send,
+    E: Send + 'static,
 {
     fn write(&mut self, data: &[u8]) -> impl Future<Output = Result<(), E>> + Send;
     fn resize(&mut self, cols: u16, rows: u16) -> impl Future<Output = Result<(), E>> + Send;
 }
 
-pub async fn listen<E, R, W, H>(shutdown_signal: impl Future) -> Result<(), Error>
+pub async fn listen<E, R, W, H>(
+    shutdown_signal: impl Future,
+    error_to_string: fn(&E) -> String,
+) -> Result<(), Error>
 where
-    E: Display + Send,
+    E: Send + 'static,
     R: TerminalReader<E>,
     W: TerminalWriter<E>,
     H: RequestHandler<E, R, W>,
@@ -82,13 +107,13 @@ where
         let _ = std::fs::remove_file(&socket_path);
     };
 
-    let listen = async {
+    let listen = async move {
         loop {
             let (stream, _) = listener.accept().await?;
             debug!("Accepted new connection");
 
-            tokio::spawn(async {
-                if let Err(err) = handle_client::<E, R, W, H>(stream).await {
+            tokio::spawn(async move {
+                if let Err(err) = handle_client::<E, R, W, H>(stream, error_to_string).await {
                     error!("Error handling client: {:?}", err);
                 }
             });
@@ -108,9 +133,12 @@ where
     Ok(())
 }
 
-async fn handle_client<E, R, W, H>(mut stream: UnixStream) -> Result<(), Error>
+async fn handle_client<E, R, W, H>(
+    mut stream: UnixStream,
+    error_to_string: fn(&E) -> String,
+) -> Result<(), Error>
 where
-    E: Display + Send,
+    E: Send + 'static,
     R: TerminalReader<E>,
     W: TerminalWriter<E>,
     H: RequestHandler<E, R, W>,
@@ -138,10 +166,10 @@ where
             Some(payload) => match handle_request::<E, R, W, H>(payload).await {
                 Ok(payload) => payload,
                 Err(e) => {
-                    warn!("Error handling request: {}", e);
+                    warn!("Error handling request: {}", e.to_string(error_to_string));
                     HandleRequestResult::Response(Some(ResponsePayload::ErrorResponse(
                         ErrorResponse {
-                            message: format!("{e}"),
+                            message: e.to_string(error_to_string),
                         },
                     )))
                 }
@@ -173,8 +201,13 @@ where
                 stream.write_u32(response_length).await?;
                 stream.write_all(&response_buf).await?;
 
-                handle_terminal_connection::<E, R, W>(stream, terminal_reader, terminal_writer)
-                    .await?;
+                handle_terminal_connection::<E, R, W>(
+                    stream,
+                    terminal_reader,
+                    terminal_writer,
+                    error_to_string,
+                )
+                .await?;
                 return Ok(());
             }
         };
@@ -185,7 +218,7 @@ where
 
 enum HandleRequestResult<E, R, W>
 where
-    E: Display + Send,
+    E: Send + 'static,
     R: TerminalReader<E>,
     W: TerminalWriter<E>,
 {
@@ -193,19 +226,30 @@ where
     AttachTerminal(R, W, std::marker::PhantomData<E>),
 }
 
-#[derive(Debug, Error)]
-enum HandleRequestError<E: Display + Send> {
-    #[error("{0}")]
+#[derive(Debug)]
+enum HandleRequestError<E: Send + 'static> {
     Error(Error),
-    #[error("{0}")]
-    HandlerError(#[from] E),
+    HandlerError(E),
+}
+impl<E: Send + 'static> HandleRequestError<E> {
+    fn to_string(&self, error_to_string: fn(&E) -> String) -> String {
+        match self {
+            HandleRequestError::Error(e) => e.to_string(),
+            HandleRequestError::HandlerError(e) => error_to_string(e),
+        }
+    }
+}
+impl<E: Send + 'static> From<E> for HandleRequestError<E> {
+    fn from(value: E) -> Self {
+        HandleRequestError::HandlerError(value)
+    }
 }
 
 async fn handle_request<E, R, W, H>(
     request_payload: RequestPayload,
 ) -> Result<HandleRequestResult<E, R, W>, HandleRequestError<E>>
 where
-    E: Display + Send,
+    E: Send + 'static,
     R: TerminalReader<E>,
     W: TerminalWriter<E>,
     H: RequestHandler<E, R, W>,
@@ -305,6 +349,63 @@ where
                 ResponsePayload::UpdateServerResponse(update_result),
             )))
         }
+        RequestPayload::GetExtensionProvidersRequest(_) => {
+            let providers = H::get_extension_providers().await?;
+
+            Ok(HandleRequestResult::Response(Some(
+                ResponsePayload::GetExtensionProvidersResponse(GetExtensionProvidersResponse {
+                    providers,
+                }),
+            )))
+        }
+        RequestPayload::SearchExtensionRequest(req) => {
+            let extensions = H::search_extension(
+                &req.provider,
+                ExtensionType::try_from(req.r#type)
+                    .map_err(|_| HandleRequestError::Error(Error::InvalidExtensionType))?,
+                &req.server_version,
+                &req.query,
+                req.include_incompatible_versions,
+            )
+            .await?;
+
+            Ok(HandleRequestResult::Response(Some(
+                ResponsePayload::SearchExtensionResponse(SearchExtensionResponse { extensions }),
+            )))
+        }
+        RequestPayload::GetExtensionVersionsRequest(req) => {
+            let versions = H::get_extension_versions(
+                &req.provider,
+                ExtensionType::try_from(req.r#type)
+                    .map_err(|_| HandleRequestError::Error(Error::InvalidExtensionType))?,
+                &req.server_version,
+                &req.extension_id,
+                req.include_incompatible_versions,
+            )
+            .await?;
+
+            Ok(HandleRequestResult::Response(Some(
+                ResponsePayload::GetExtensionVersionsResponse(GetExtensionVersionsResponse {
+                    versions,
+                }),
+            )))
+        }
+        RequestPayload::AddExtensionRequest(req) => {
+            let result = H::add_extension(
+                Path::new(&req.server_dir),
+                &req.provider,
+                ExtensionType::try_from(req.r#type)
+                    .map_err(|_| HandleRequestError::Error(Error::InvalidExtensionType))?,
+                &req.extension_id,
+                &req.extension_version_id,
+                req.allow_incompatible_versions,
+            )
+            .await?;
+
+            Ok(HandleRequestResult::Response(Some(
+                ResponsePayload::AddExtensionResponse(result),
+            )))
+        }
     }
 }
 
@@ -312,9 +413,10 @@ async fn handle_terminal_connection<E, R, W>(
     stream: UnixStream,
     mut terminal_reader: R,
     mut terminal_writer: W,
+    error_to_string: fn(&E) -> String,
 ) -> Result<(), Error>
 where
-    E: Display + Send,
+    E: Send + 'static,
     R: TerminalReader<E>,
     W: TerminalWriter<E>,
 {
@@ -361,7 +463,10 @@ where
         .await;
 
         if let Err(e) = result {
-            error!("Error in terminal input task: {e}");
+            error!(
+                "Error in terminal input task: {}",
+                e.to_string(error_to_string)
+            );
         }
     });
 
@@ -397,7 +502,10 @@ where
         .await;
 
         if let Err(e) = result {
-            error!("Error in terminal output task: {e}");
+            error!(
+                "Error in terminal output task: {}",
+                e.to_string(error_to_string)
+            );
         }
     });
 

@@ -8,7 +8,7 @@ use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
 use terminal_size::{Height, Width, terminal_size};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::cli::Subcommand;
+use crate::cli::{Extensions, ExtensionsAddArgs, Subcommand};
 
 mod cli;
 mod eula;
@@ -49,6 +49,11 @@ async fn start() -> anyhow::Result<()> {
         Subcommand::Ps => {
             list_running_servers().await?;
         }
+        Subcommand::Extensions { command } => match command {
+            Extensions::Add(args) => {
+                add_extension(args).await?;
+            }
+        },
     }
 
     Ok(())
@@ -123,7 +128,13 @@ async fn create_server(args: cli::CreateArgs) -> anyhow::Result<()> {
                 .map(VersionDisplay)
                 .collect::<Vec<_>>();
 
-            inquire::Select::new("Version:", versions).prompt()?.0.name
+            let latest_stable_index = versions.iter().position(|v| v.0.is_stable).unwrap_or(0);
+
+            inquire::Select::new("Version:", versions)
+                .with_starting_cursor(latest_stable_index)
+                .prompt()?
+                .0
+                .name
         }
     };
 
@@ -151,7 +162,13 @@ async fn create_server(args: cli::CreateArgs) -> anyhow::Result<()> {
 
                 let builds = builds.into_iter().map(BuildDisplay).collect::<Vec<_>>();
 
-                inquire::Select::new("Build:", builds).prompt()?.0.name
+                let latest_stable_index = builds.iter().position(|b| b.0.is_stable).unwrap_or(0);
+
+                inquire::Select::new("Build:", builds)
+                    .with_starting_cursor(latest_stable_index)
+                    .prompt()?
+                    .0
+                    .name
             }
         }
     };
@@ -584,6 +601,141 @@ async fn list_running_servers() -> anyhow::Result<()> {
             print!("{:width$}  ", cell, width = column_widths[i]);
         }
         println!();
+    }
+
+    Ok(())
+}
+
+async fn add_extension(args: ExtensionsAddArgs) -> anyhow::Result<()> {
+    let mut client = Client::connect()
+        .await
+        .context("Failed to connect to minecraftd")?;
+
+    let server_dir = match args.server_dir {
+        Some(p) => p,
+        None => std::env::current_dir().context("Failed to get current directory")?,
+    };
+
+    if !ServerManifest::manifest_path(&server_dir).exists() {
+        bail!(
+            "No server manifest found in '{}'. Are you sure this is a valid server directory?",
+            server_dir.display()
+        );
+    }
+
+    let manifest = ServerManifest::load(&server_dir)
+        .await
+        .context("Failed to load server manifest")?;
+
+    let providers = client.get_extension_providers().await?;
+    let provider = inquire::Select::new("Extension provider:", providers).prompt()?;
+
+    let type_ = match inquire::Select::new("Extension type:", vec!["mod", "plugin"]).prompt()? {
+        "mod" => mcctl_protocol::ExtensionType::Mod,
+        "plugin" => mcctl_protocol::ExtensionType::Plugin,
+        _ => bail!("Invalid extension type"),
+    };
+
+    let search_query = inquire::Text::new("Search query:").prompt()?;
+
+    let pb = indicatif::ProgressBar::new_spinner();
+    pb.set_message("Searching for extensions...");
+    pb.enable_steady_tick(Duration::from_millis(100));
+
+    let extensions = client
+        .search_extension(
+            &provider,
+            type_,
+            &manifest.version,
+            &search_query,
+            args.allow_incompatible_versions,
+        )
+        .await
+        .context("Failed to search for extensions")?;
+
+    pb.finish_and_clear();
+
+    struct ExtensionDisplay(mcctl_protocol::ExtensionInfo);
+    impl Display for ExtensionDisplay {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.0.name)
+        }
+    }
+
+    let extension = inquire::Select::new(
+        "Select a extension:",
+        extensions.into_iter().map(ExtensionDisplay).collect(),
+    )
+    .prompt()?;
+
+    let pb = indicatif::ProgressBar::new_spinner();
+    pb.set_message("Fetching extension versions...");
+    pb.enable_steady_tick(Duration::from_millis(100));
+
+    let extension_versions = client
+        .get_extension_versions(
+            &provider,
+            type_,
+            &manifest.version,
+            &extension.0.id,
+            args.allow_incompatible_versions,
+        )
+        .await
+        .context("Failed to get extension versions")?;
+
+    pb.finish_and_clear();
+
+    struct ExtensionVersionDisplay(mcctl_protocol::ExtensionVersionInfo);
+    impl Display for ExtensionVersionDisplay {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            if self.0.is_stable {
+                write!(f, "{}", self.0.version)
+            } else {
+                write!(f, "{} (unstable)", self.0.version)
+            }
+        }
+    }
+
+    let latest_stable_index = extension_versions
+        .iter()
+        .position(|v| v.is_stable)
+        .unwrap_or(0);
+
+    let extension_version = inquire::Select::new(
+        "Select a extension version:",
+        extension_versions
+            .into_iter()
+            .map(ExtensionVersionDisplay)
+            .collect(),
+    )
+    .with_starting_cursor(latest_stable_index)
+    .prompt()?;
+
+    let pb = indicatif::ProgressBar::new_spinner();
+    pb.set_message("Adding extension to server...");
+    pb.enable_steady_tick(Duration::from_millis(100));
+
+    let server_dir = server_dir
+        .canonicalize()
+        .context("Failed to canonicalize path")?
+        .to_str()
+        .context("Path is not valid UTF-8")?
+        .to_string();
+    let result = client
+        .add_extension(
+            &server_dir,
+            &provider,
+            type_,
+            &extension.0.id,
+            &extension_version.0.id,
+            args.allow_incompatible_versions,
+        )
+        .await
+        .context("Failed to add extension to server")?;
+
+    pb.finish_with_message("Extension added successfully. Added extensions:");
+    for extension in result.added_extensions {
+        println!("  - {}", extension.name);
     }
 
     Ok(())

@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use minecraftd_manifest::{Connection, ServerManifest};
+use minecraftd_manifest::{Connection, ExtensionType, ServerManifest};
 use pty_process::Pty;
 use rand::distr::{Alphanumeric, SampleString};
 use tokio::{process::Child, sync::Mutex, task::JoinSet, time::timeout};
@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::{
     port::Port,
     server::{
+        extension_providers::{extension_cache_root_dir, get_extension_provider},
         implementations::get_server_implementation,
         java_runtime::JavaRuntimeExt,
         runner::{
@@ -357,11 +358,8 @@ async fn do_start_server(
         }
     }
 
-    let (server_port, rcon_port, rcon_password) = prepare_server(&server_dir, &manifest).await?;
-
-    manifest.java_runtime.prepare().await?;
-
-    let java_path = manifest.java_runtime.java_path();
+    let (server_port, rcon_port, rcon_password) =
+        prepare_server_properties(&server_dir, &manifest).await?;
 
     let server_implementation = get_server_implementation(&manifest.server_implementation)
         .with_context(|| {
@@ -370,6 +368,12 @@ async fn do_start_server(
                 manifest.server_implementation
             )
         })?;
+    prepare_extensions(&server_dir, &manifest).await?;
+
+    manifest.java_runtime.prepare().await?;
+
+    let java_path = manifest.java_runtime.java_path();
+
     let server_jar_path = server_implementation
         .get_server_jar_path(&server_dir, &manifest.version, &manifest.build)
         .await
@@ -407,7 +411,7 @@ async fn do_start_server(
     Ok(())
 }
 
-async fn prepare_server(
+async fn prepare_server_properties(
     server_dir: &Path,
     manifest: &ServerManifest,
 ) -> anyhow::Result<(ServerPort, Port, String)> {
@@ -446,6 +450,137 @@ async fn prepare_server(
     );
 
     Ok((server_port, rcon_port, rcon_password))
+}
+
+async fn prepare_extensions(server_dir: &Path, manifest: &ServerManifest) -> anyhow::Result<()> {
+    let extension_cache_dir = extension_cache_root_dir()?;
+
+    let mods_dir = server_dir.join("mods");
+    let plugins_dir = server_dir.join("plugins");
+
+    let types = [
+        (ExtensionType::Mod, &mods_dir),
+        (ExtensionType::Plugin, &plugins_dir),
+    ];
+
+    // symlink path, type, provider name, id, version id
+    let mut managed_mods_in_mods_dir =
+        Vec::<(PathBuf, ExtensionType, OsString, OsString, OsString)>::new();
+
+    // find all symlinks in mods and plugins directories and check if they are managed by us
+    for (type_, dir) in types {
+        if !dir.exists() {
+            continue;
+        }
+
+        let mut entries = tokio::fs::read_dir(dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.is_symlink() {
+                let target = tokio::fs::read_link(&path).await?;
+                if let Ok(relative_target) = target.strip_prefix(&extension_cache_dir) {
+                    let components = relative_target.components().collect::<Vec<_>>();
+                    if components.len() == 5 {
+                        let provider = components[0].as_os_str().to_os_string();
+
+                        let ty = match components[1].as_os_str().to_str() {
+                            Some("mods") => ExtensionType::Mod,
+                            Some("plugins") => ExtensionType::Plugin,
+                            _ => continue,
+                        };
+
+                        if ty != type_ {
+                            warn!(
+                                "Symlink at '{}' points to a {:?} but is in the {:?} directory. Removing it.",
+                                path.display(),
+                                ty,
+                                type_
+                            );
+                            tokio::fs::remove_file(&path).await?;
+                            continue;
+                        }
+
+                        let id = components[2].as_os_str().to_os_string();
+                        let version_id = components[3].as_os_str().to_os_string();
+
+                        if components[4].as_os_str() != "extension.jar" {
+                            continue;
+                        }
+
+                        managed_mods_in_mods_dir.push((path, ty, provider, id, version_id));
+                    }
+                }
+            }
+        }
+    }
+
+    // remove symlinks that point to extensions that are no longer in the manifest
+    for (path, type_, provider, id, version_id) in &managed_mods_in_mods_dir {
+        if !manifest.extensions.iter().any(|e| {
+            e.type_ == *type_
+                && OsStr::new(&e.provider) == provider
+                && OsStr::new(&e.id) == id
+                && OsStr::new(&e.version_id) == version_id
+        }) {
+            debug!(
+                "Removing symlink at '{}' that points to an extension that is no longer in the manifest",
+                path.display()
+            );
+            tokio::fs::remove_file(path).await?;
+        }
+    }
+
+    // create symlinks for extensions in the manifest that are not yet symlinked
+    for extension in &manifest.extensions {
+        if managed_mods_in_mods_dir
+            .iter()
+            .any(|(_, type_, provider, id, version_id)| {
+                *type_ == extension.type_
+                    && provider.to_string_lossy() == extension.provider
+                    && id.to_string_lossy() == extension.id
+                    && version_id.to_string_lossy() == extension.version_id
+            })
+        {
+            continue;
+        }
+
+        let provider = get_extension_provider(&extension.provider)
+            .with_context(|| format!("Unknown extension provider '{}'", extension.provider))?;
+
+        let target_path = provider
+            .get_extension_jar_path(extension.type_, &extension.id, &extension.version_id)
+            .await
+            .context("Failed to prepare extension jar")?;
+
+        let mut symlink_path = server_dir.to_path_buf();
+        match extension.type_ {
+            ExtensionType::Mod => symlink_path.push("mods"),
+            ExtensionType::Plugin => symlink_path.push("plugins"),
+        }
+        tokio::fs::create_dir_all(&symlink_path).await?;
+        symlink_path.push(format!(
+            "{}-{}-{}-{}.jar",
+            extension.name, extension.provider, extension.id, extension.version_id
+        ));
+
+        debug!(
+            "Creating symlink for extension '{}' at '{}'",
+            extension.id,
+            symlink_path.display()
+        );
+
+        tokio::fs::symlink(&target_path, &symlink_path)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create symlink for extension '{}' at '{}'",
+                    extension.id,
+                    symlink_path.display()
+                )
+            })?;
+    }
+
+    Ok(())
 }
 
 fn command_substitute_placeholders(

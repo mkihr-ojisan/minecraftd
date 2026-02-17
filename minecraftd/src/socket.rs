@@ -217,6 +217,100 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
             },
         })
     }
+
+    async fn get_extension_providers() -> anyhow::Result<Vec<String>> {
+        Ok(server::get_extension_providers()
+            .map(String::from)
+            .collect())
+    }
+
+    async fn search_extension(
+        provider: &str,
+        type_: ExtensionType,
+        server_version: &str,
+        query: &str,
+        include_incompatible_versions: bool,
+    ) -> anyhow::Result<Vec<ExtensionInfo>> {
+        Ok(server::search_extensions(
+            provider,
+            match type_ {
+                ExtensionType::Mod => minecraftd_manifest::ExtensionType::Mod,
+                ExtensionType::Plugin => minecraftd_manifest::ExtensionType::Plugin,
+            },
+            server_version,
+            query,
+            include_incompatible_versions,
+        )
+        .await?
+        .into_iter()
+        .map(|m| ExtensionInfo {
+            id: m.id,
+            r#type: type_ as i32,
+            name: m.name,
+        })
+        .collect())
+    }
+
+    async fn get_extension_versions(
+        provider: &str,
+        type_: ExtensionType,
+        server_version: &str,
+        extension_id: &str,
+        include_incompatible_versions: bool,
+    ) -> anyhow::Result<Vec<ExtensionVersionInfo>> {
+        Ok(server::get_extension_versions(
+            provider,
+            match type_ {
+                ExtensionType::Mod => minecraftd_manifest::ExtensionType::Mod,
+                ExtensionType::Plugin => minecraftd_manifest::ExtensionType::Plugin,
+            },
+            server_version,
+            extension_id,
+            include_incompatible_versions,
+        )
+        .await?
+        .into_iter()
+        .map(|v| ExtensionVersionInfo {
+            id: v.id,
+            version: v.version,
+            is_stable: v.is_stable,
+        })
+        .collect())
+    }
+
+    async fn add_extension(
+        server_dir: &Path,
+        provider: &str,
+        type_: ExtensionType,
+        extension_id: &str,
+        extension_version_id: &str,
+        allow_incompatible_versions: bool,
+    ) -> anyhow::Result<AddExtensionResponse> {
+        let result = server::add_extension(
+            server_dir,
+            provider,
+            match type_ {
+                ExtensionType::Mod => minecraftd_manifest::ExtensionType::Mod,
+                ExtensionType::Plugin => minecraftd_manifest::ExtensionType::Plugin,
+            },
+            extension_id,
+            extension_version_id,
+            allow_incompatible_versions,
+        )
+        .await?;
+
+        Ok(AddExtensionResponse {
+            added_extensions: result
+                .added_extensions
+                .into_iter()
+                .map(|m| ExtensionInfo {
+                    id: m.id,
+                    r#type: type_ as i32,
+                    name: m.name,
+                })
+                .collect(),
+        })
+    }
 }
 
 pub async fn start_server() -> anyhow::Result<()> {
@@ -240,7 +334,7 @@ pub async fn start_server() -> anyhow::Result<()> {
         TerminalReader,
         TerminalWriter,
         RequestHandler,
-    >(shutdown_signal)
+    >(shutdown_signal, |e| format!("{e:?}"))
     .await?;
 
     Ok(())

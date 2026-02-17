@@ -285,6 +285,115 @@ impl Client {
             }),
         }
     }
+
+    pub async fn get_extension_providers(&mut self) -> Result<Vec<String>, Error> {
+        let response_payload = self
+            .send_request(RequestPayload::GetExtensionProvidersRequest(
+                GetExtensionProvidersRequest {},
+            ))
+            .await?;
+
+        match response_payload {
+            Some(ResponsePayload::GetExtensionProvidersResponse(
+                GetExtensionProvidersResponse { providers },
+            )) => Ok(providers),
+            _ => Err(Error::UnexpectedResponseType {
+                expected: "GetExtensionProvidersResponse",
+                actual: format!("{response_payload:?}"),
+            }),
+        }
+    }
+
+    pub async fn search_extension(
+        &mut self,
+        provider: impl Into<String>,
+        type_: ExtensionType,
+        server_version: impl Into<String>,
+        query: impl Into<String>,
+        include_incompatible_versions: bool,
+    ) -> Result<Vec<ExtensionInfo>, Error> {
+        let response_payload = self
+            .send_request(RequestPayload::SearchExtensionRequest(
+                SearchExtensionRequest {
+                    provider: provider.into(),
+                    r#type: type_ as i32,
+                    server_version: server_version.into(),
+                    query: query.into(),
+                    include_incompatible_versions,
+                },
+            ))
+            .await?;
+
+        match response_payload {
+            Some(ResponsePayload::SearchExtensionResponse(SearchExtensionResponse {
+                extensions,
+            })) => Ok(extensions),
+            _ => Err(Error::UnexpectedResponseType {
+                expected: "SearchExtensionResponse",
+                actual: format!("{response_payload:?}"),
+            }),
+        }
+    }
+
+    pub async fn get_extension_versions(
+        &mut self,
+        provider: impl Into<String>,
+        type_: ExtensionType,
+        server_version: impl Into<String>,
+        extension_id: impl Into<String>,
+        include_incompatible_versions: bool,
+    ) -> Result<Vec<ExtensionVersionInfo>, Error> {
+        let response_payload = self
+            .send_request(RequestPayload::GetExtensionVersionsRequest(
+                GetExtensionVersionsRequest {
+                    provider: provider.into(),
+                    r#type: type_ as i32,
+                    server_version: server_version.into(),
+                    extension_id: extension_id.into(),
+                    include_incompatible_versions,
+                },
+            ))
+            .await?;
+
+        match response_payload {
+            Some(ResponsePayload::GetExtensionVersionsResponse(GetExtensionVersionsResponse {
+                versions,
+            })) => Ok(versions),
+            _ => Err(Error::UnexpectedResponseType {
+                expected: "GetExtensionVersionsResponse",
+                actual: format!("{response_payload:?}"),
+            }),
+        }
+    }
+
+    pub async fn add_extension(
+        &mut self,
+        server_dir: impl Into<String>,
+        provider: impl Into<String>,
+        type_: ExtensionType,
+        extension_id: impl Into<String>,
+        extension_version_id: impl Into<String>,
+        allow_incompatible_versions: bool,
+    ) -> Result<AddExtensionResponse, Error> {
+        let response_payload = self
+            .send_request(RequestPayload::AddExtensionRequest(AddExtensionRequest {
+                server_dir: server_dir.into(),
+                provider: provider.into(),
+                r#type: type_ as i32,
+                extension_id: extension_id.into(),
+                extension_version_id: extension_version_id.into(),
+                allow_incompatible_versions,
+            }))
+            .await?;
+
+        match response_payload {
+            Some(ResponsePayload::AddExtensionResponse(result)) => Ok(result),
+            _ => Err(Error::UnexpectedResponseType {
+                expected: "AddExtensionResponse",
+                actual: format!("{response_payload:?}"),
+            }),
+        }
+    }
 }
 
 pub struct TerminalReader {

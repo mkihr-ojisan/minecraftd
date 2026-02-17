@@ -24,6 +24,8 @@ pub struct ServerManifest {
     pub auto_start: bool,
     #[serde(default)]
     pub connection: Connection,
+    #[serde(default)]
+    pub extensions: Vec<ExntensionEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +43,23 @@ pub enum Connection {
     Proxy {
         hostname: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExntensionEntry {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: ExtensionType,
+    pub provider: String,
+    pub id: String,
+    pub version_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionType {
+    Mod,
+    Plugin,
 }
 
 #[derive(Debug, Error)]
@@ -74,6 +93,7 @@ impl ServerManifest {
             restart_on_failure: true,
             auto_start: true,
             connection: Connection::Direct,
+            extensions: Vec::new(),
         }
     }
 

@@ -1,13 +1,15 @@
 use std::path::Path;
 
 use anyhow::{Context, bail};
-use minecraftd_manifest::{Connection, ServerManifest};
+use minecraftd_manifest::{Connection, ExntensionEntry, ExtensionType, ServerManifest};
 
 use crate::server::{
+    extension_providers::{ExtensionInfo, ExtensionProvider, get_extension_provider},
     implementations::{Build, Version, get_server_implementation},
     java_runtime::JavaRuntimeExt,
 };
 
+mod extension_providers;
 mod implementations;
 mod java_runtime;
 pub mod proxy_server;
@@ -152,4 +154,185 @@ pub async fn update_server(
         new_version: manifest.version,
         new_build: manifest.build,
     })
+}
+
+pub fn get_extension_providers() -> impl Iterator<Item = &'static str> {
+    extension_providers::EXTENSION_PROVIDERS
+        .iter()
+        .map(|p| p.name())
+}
+
+pub async fn search_extensions(
+    provider: &str,
+    type_: ExtensionType,
+    server_version: &str,
+    query: &str,
+    include_incompatible_versions: bool,
+) -> anyhow::Result<Vec<extension_providers::ExtensionInfo>> {
+    let Some(provider) = extension_providers::EXTENSION_PROVIDERS
+        .iter()
+        .find(|p| p.name() == provider)
+    else {
+        bail!("Unknown extensioin provider '{}'", provider);
+    };
+
+    provider
+        .search_extension(type_, server_version, query, include_incompatible_versions)
+        .await
+}
+
+pub async fn get_extension_versions(
+    provider: &str,
+    type_: ExtensionType,
+    server_version: &str,
+    extension_id: &str,
+    include_incompatible_versions: bool,
+) -> anyhow::Result<Vec<extension_providers::ExtensionVersionInfo>> {
+    let Some(provider) = extension_providers::EXTENSION_PROVIDERS
+        .iter()
+        .find(|p| p.name() == provider)
+    else {
+        bail!("Unknown extension provider '{}'", provider);
+    };
+
+    provider
+        .get_extension_versions(
+            type_,
+            server_version,
+            extension_id,
+            include_incompatible_versions,
+        )
+        .await
+}
+
+pub struct AddExtensionResult {
+    pub added_extensions: Vec<ExtensionInfo>,
+}
+
+pub async fn add_extension(
+    server_dir: &Path,
+    provider: &str,
+    type_: ExtensionType,
+    extension_id: &str,
+    extension_version_id: &str,
+    allow_incompatible_versions: bool,
+) -> anyhow::Result<AddExtensionResult> {
+    if runner::is_server_running(server_dir).await? {
+        bail!("Cannot add extension while server is running");
+    }
+
+    let mut manifest = ServerManifest::load(server_dir)
+        .await
+        .context("Failed to load server manifest")?;
+
+    let provider = get_extension_provider(provider).context("Unknown extension provider")?;
+
+    #[async_recursion::async_recursion]
+    async fn do_add_extension(
+        manifest: &mut ServerManifest,
+        added_extensions: &mut Vec<ExtensionInfo>,
+        provider: &dyn ExtensionProvider,
+        type_: ExtensionType,
+        extension_id: &str,
+        extension_version_id: Option<&str>,
+        allow_incompatible_versions: bool,
+    ) -> anyhow::Result<()> {
+        // check if extension is already added with the same version (if version is not specified, just check if extension is already added)
+        if manifest.extensions.iter().any(|m| {
+            m.provider == provider.name()
+                && m.id == extension_id
+                && extension_version_id.is_none_or(|v| m.version_id == v)
+        }) {
+            return Ok(());
+        }
+
+        // remove any existing entry for the extension with a different version
+        manifest
+            .extensions
+            .retain(|m| !(m.provider == provider.name() && m.id == extension_id));
+
+        let extension_info = provider
+            .get_extension_info(type_, extension_id)
+            .await
+            .context("Failed to get extension info")?;
+
+        let version_info = if let Some(extension_version_id) = extension_version_id {
+            provider
+                .get_extension_version_info(type_, extension_id, extension_version_id)
+                .await
+                .context("Failed to get extension version info")?
+        } else {
+            let versions = provider
+                .get_extension_versions(
+                    type_,
+                    &manifest.version,
+                    extension_id,
+                    allow_incompatible_versions,
+                )
+                .await
+                .context("Failed to get extension versions")?;
+
+            // latest stable version or latest version if no stable version is available
+            let index = versions.iter().position(|v| v.is_stable).unwrap_or(0);
+
+            versions
+                .into_iter()
+                .nth(index)
+                .context("No versions found for extension")?
+        };
+
+        provider
+            .get_extension_jar_path(type_, extension_id, &version_info.id)
+            .await
+            .context("Failed to prepare extension jar")?;
+
+        manifest.extensions.push(ExntensionEntry {
+            name: extension_info.name.clone(),
+            type_,
+            provider: provider.name().to_string(),
+            id: extension_id.to_string(),
+            version_id: version_info.id.clone(),
+        });
+
+        added_extensions.push(extension_info);
+
+        for dependency in version_info.dependencies {
+            do_add_extension(
+                manifest,
+                added_extensions,
+                provider,
+                type_,
+                &dependency.extension_id,
+                dependency.extension_version_id.as_deref(),
+                allow_incompatible_versions,
+            )
+            .await
+            .context(format!(
+                "Failed to add dependency extension '{}' for extension '{}'",
+                dependency.extension_id, extension_id
+            ))?;
+        }
+
+        Ok(())
+    }
+
+    let mut added_extensions = Vec::new();
+
+    do_add_extension(
+        &mut manifest,
+        &mut added_extensions,
+        provider,
+        type_,
+        extension_id,
+        Some(extension_version_id),
+        allow_incompatible_versions,
+    )
+    .await?;
+
+    manifest
+        .save(server_dir)
+        .await
+        .context("Failed to save updated server manifest")?;
+
+    Ok(AddExtensionResult { added_extensions })
 }

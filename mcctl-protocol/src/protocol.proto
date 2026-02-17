@@ -14,6 +14,10 @@ message Request {
     WaitServerReadyRequest wait_server_ready_request = 10;
     RestartServerRequest restart_server_request = 11;
     UpdateServerRequest update_server_request = 12;
+    GetExtensionProvidersRequest get_extension_providers_request = 13;
+    SearchExtensionRequest search_extension_request = 14;
+    GetExtensionVersionsRequest get_extension_versions_request = 15;
+    AddExtensionRequest add_extension_request = 16;
   }
 }
 
@@ -23,8 +27,12 @@ message Response {
     GetServerImplementationsResponse get_server_implementations_response = 2;
     GetVersionsResponse get_versions_response = 3;
     GetBuildsResponse get_builds_response = 4;
-    GetRunningServersResponse get_running_servers_response = 10;
-    UpdateServerResponse update_server_response = 11;
+    GetRunningServersResponse get_running_servers_response = 5;
+    UpdateServerResponse update_server_response = 6;
+    GetExtensionProvidersResponse get_extension_providers_response = 7;
+    SearchExtensionResponse search_extension_response = 8;
+    GetExtensionVersionsResponse get_extension_versions_response = 9;
+    AddExtensionResponse add_extension_response = 10;
   }
 }
 
@@ -161,4 +169,65 @@ message UpdateServerResponse {
   optional string old_build = 3;
   optional string new_version = 4;
   optional string new_build = 5;
+}
+
+message GetExtensionProvidersRequest {
+}
+
+message GetExtensionProvidersResponse {
+  repeated string providers = 1;
+}
+
+message SearchExtensionRequest {
+  string provider = 1;
+  ExtensionType type = 2;
+  string server_version = 3;
+  string query = 4;
+  bool include_incompatible_versions = 5;
+}
+
+message SearchExtensionResponse {
+  repeated ExtensionInfo extensions = 1;
+}
+
+message ExtensionInfo {
+  string id = 1;
+  ExtensionType type = 2;
+  string name = 3;
+}
+
+enum ExtensionType {
+  MOD = 0;
+  PLUGIN = 1;
+}
+
+message GetExtensionVersionsRequest {
+  string provider = 1;
+  ExtensionType type = 2;
+  string server_version = 3;
+  string extension_id = 4;
+  bool include_incompatible_versions = 5;
+}
+
+message GetExtensionVersionsResponse {
+  repeated ExtensionVersionInfo versions = 1;
+}
+
+message ExtensionVersionInfo {
+  string id = 1;
+  string version = 2;
+  bool is_stable = 3;
+}
+
+message AddExtensionRequest {
+  string server_dir = 1;
+  string provider = 2;
+  ExtensionType type = 3;
+  string extension_id = 4;
+  string extension_version_id = 5;
+  bool allow_incompatible_versions = 6;
+}
+
+message AddExtensionResponse {
+  repeated ExtensionInfo added_extensions = 1;
 }

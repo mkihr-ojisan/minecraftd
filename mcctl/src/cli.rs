@@ -24,6 +24,11 @@ pub enum Subcommand {
     Update(UpdateArgs),
     /// List all running servers
     Ps,
+    /// Manage server mods/plugins
+    Extensions {
+        #[command(subcommand)]
+        command: Extensions,
+    },
 }
 
 #[derive(clap::Args)]
@@ -95,4 +100,19 @@ pub enum UpdateType {
     Stable,
     /// Update to the latest unstable version of the server (e.g. snapshots).
     Latest,
+}
+
+#[derive(clap::Subcommand)]
+pub enum Extensions {
+    /// Add a mod/plugin to the server
+    Add(ExtensionsAddArgs),
+}
+
+#[derive(clap::Args)]
+pub struct ExtensionsAddArgs {
+    /// The directory of the server to add the mod/plugin to. If not specified, current directory will be used.
+    pub server_dir: Option<PathBuf>,
+    /// Allow adding mods that are incompatible with the server version.
+    #[arg(long)]
+    pub allow_incompatible_versions: bool,
 }
