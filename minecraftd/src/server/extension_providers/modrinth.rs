@@ -41,6 +41,10 @@ impl ExtensionProvider for Modrinth {
                 ExtensionType::Plugin => facets.push(r#"["project_type:plugin"]"#.to_string()),
             }
 
+            facets.push(
+                r#"["categories:paper", "categories:spigot", "categories:bukkit"]"#.to_string(),
+            );
+
             Some(format!("[{}]", facets.join(",")))
         };
 
@@ -95,7 +99,7 @@ impl ExtensionProvider for Modrinth {
             let versions = modrinth_api::apis::versions_api::get_project_versions(
                 &CONFIG,
                 extension_id,
-                None,
+                Some(r#"["paper", "spigot", "bukkit"]"#),
                 if include_incompatible_versions {
                     None
                 } else {
