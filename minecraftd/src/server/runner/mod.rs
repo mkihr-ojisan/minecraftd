@@ -579,6 +579,7 @@ async fn do_stop_server(id: Uuid, restarting: bool) -> anyhow::Result<()> {
 
         if let Err(err) = request_server_stop(server.rcon_port.port(), &server.rcon_password).await
         {
+            drop(runner);
             debug!(
                 "Failed to request server stop. Killing it instead: {:?}",
                 err
