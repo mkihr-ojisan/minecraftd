@@ -841,7 +841,8 @@ async fn do_stop_server(id: Uuid, restarting: bool) -> anyhow::Result<()> {
 
         server.status.set(ServerStatus::Stopping { restarting });
 
-        if let Err(err) = request_server_stop(server.rcon_port.port(), &server.rcon_password).await
+        if let Err(err) =
+            request_server_stop(server.rcon_port.port(), &server.rcon_password, restarting).await
         {
             drop(runner);
             debug!(
@@ -866,7 +867,11 @@ async fn do_stop_server(id: Uuid, restarting: bool) -> anyhow::Result<()> {
     }
 }
 
-async fn request_server_stop(rcon_port: u16, rcon_password: &str) -> anyhow::Result<()> {
+async fn request_server_stop(
+    rcon_port: u16,
+    rcon_password: &str,
+    restarting: bool,
+) -> anyhow::Result<()> {
     let mut count = 0;
     loop {
         let result: anyhow::Result<()> = async {
@@ -874,6 +879,12 @@ async fn request_server_stop(rcon_port: u16, rcon_password: &str) -> anyhow::Res
                 minecraft_rcon::Client::connect((Ipv4Addr::LOCALHOST, rcon_port), rcon_password)
                     .await
                     .context("Failed to connect to RCON")?;
+
+            if restarting {
+                client
+                    .execute_command("kick @a The server is restarting. Please try connecting again after a while.")
+                    .await?;
+            }
 
             client
                 .execute_command("stop")
