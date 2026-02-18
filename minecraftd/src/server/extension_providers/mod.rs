@@ -110,10 +110,10 @@ pub struct ExtensionVersionInfo {
     pub id: String,
     pub version: String,
     pub is_stable: bool,
-    pub dependencies: Vec<ExntensionDependency>,
+    pub dependencies: Vec<ExtensionDependency>,
 }
 
-pub struct ExntensionDependency {
+pub struct ExtensionDependency {
     pub extension_id: String,
     pub extension_version_id: Option<String>,
 }

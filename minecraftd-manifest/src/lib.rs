@@ -27,7 +27,7 @@ pub struct ServerManifest {
     #[serde(default)]
     pub connection: Connection,
     #[serde(default)]
-    pub extensions: Vec<ExntensionEntry>,
+    pub extensions: Vec<ExtensionEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,7 +48,7 @@ pub enum Connection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExntensionEntry {
+pub struct ExtensionEntry {
     pub name: String,
     #[serde(rename = "type")]
     pub type_: ExtensionType,
@@ -109,8 +109,8 @@ impl ServerManifest {
     pub async fn load(server_dir: &Path) -> Result<Self, Error> {
         let manifest_path = Self::manifest_path(server_dir);
         let manifest_data = tokio::fs::read_to_string(&manifest_path).await?;
-        let manigest: ServerManifest = serde_yml::from_str(&manifest_data)?;
-        Ok(manigest)
+        let manifest: ServerManifest = serde_yml::from_str(&manifest_data)?;
+        Ok(manifest)
     }
 
     pub async fn save(&self, server_dir: &Path) -> Result<(), Error> {

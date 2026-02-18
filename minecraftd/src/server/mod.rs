@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, bail};
-use minecraftd_manifest::{Connection, ExntensionEntry, ExtensionType, ServerManifest};
+use minecraftd_manifest::{Connection, ExtensionEntry, ExtensionType, ServerManifest};
 
 use crate::server::{
     extension_providers::{
@@ -176,7 +176,7 @@ pub async fn search_extensions(
         .iter()
         .find(|p| p.name() == provider)
     else {
-        bail!("Unknown extensioin provider '{}'", provider);
+        bail!("Unknown extension provider '{}'", provider);
     };
 
     provider
@@ -288,7 +288,7 @@ pub async fn add_extension(
             .await
             .context("Failed to prepare extension jar")?;
 
-        manifest.extensions.push(ExntensionEntry {
+        manifest.extensions.push(ExtensionEntry {
             name: extension_info.name.clone(),
             type_,
             provider: provider.name().to_string(),

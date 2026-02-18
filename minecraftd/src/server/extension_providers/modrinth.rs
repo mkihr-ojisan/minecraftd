@@ -10,7 +10,7 @@ use reqwest::Url;
 
 use crate::{
     server::extension_providers::{
-        ExntensionDependency, ExtensionInfo, ExtensionProvider, ExtensionVersionInfo,
+        ExtensionDependency, ExtensionInfo, ExtensionProvider, ExtensionVersionInfo,
     },
     util::BoxedFuture,
 };
@@ -124,7 +124,7 @@ impl ExtensionProvider for Modrinth {
                             .flatten()
                             .flat_map(|d| {
                                 if d.dependency_type == DependencyType::Required {
-                                    Some(ExntensionDependency {
+                                    Some(ExtensionDependency {
                                         extension_id: d.project_id??,
                                         extension_version_id: d.version_id?,
                                     })
@@ -160,7 +160,7 @@ impl ExtensionProvider for Modrinth {
                     .flatten()
                     .flat_map(|d| {
                         if d.dependency_type == DependencyType::Required {
-                            Some(ExntensionDependency {
+                            Some(ExtensionDependency {
                                 extension_id: d.project_id??,
                                 extension_version_id: d.version_id?,
                             })
