@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 
 use crate::util::BoxedFuture;
 
+pub mod custom;
 pub mod paper;
 pub mod vanilla;
 
@@ -143,7 +144,7 @@ pub struct Build {
 }
 
 pub const SERVER_IMPLEMENTATIONS: &[&dyn ServerImplementation] =
-    &[&vanilla::Vanilla, &paper::Paper];
+    &[&vanilla::Vanilla, &paper::Paper, &custom::Custom];
 
 pub fn get_server_implementation(name: &str) -> Option<&'static dyn ServerImplementation> {
     SERVER_IMPLEMENTATIONS

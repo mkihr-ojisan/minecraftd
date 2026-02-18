@@ -123,18 +123,21 @@ async fn create_server(args: cli::CreateArgs) -> anyhow::Result<()> {
             let versions = client
                 .get_versions(&server_implementation)
                 .await
-                .context("Failed to get versions")?
-                .into_iter()
-                .map(VersionDisplay)
-                .collect::<Vec<_>>();
+                .context("Failed to get versions")?;
 
-            let latest_stable_index = versions.iter().position(|v| v.0.is_stable).unwrap_or(0);
+            if versions.len() == 1 {
+                versions.into_iter().next().unwrap().name
+            } else {
+                let versions = versions.into_iter().map(VersionDisplay).collect::<Vec<_>>();
 
-            inquire::Select::new("Version:", versions)
-                .with_starting_cursor(latest_stable_index)
-                .prompt()?
-                .0
-                .name
+                let latest_stable_index = versions.iter().position(|v| v.0.is_stable).unwrap_or(0);
+
+                inquire::Select::new("Version:", versions)
+                    .with_starting_cursor(latest_stable_index)
+                    .prompt()?
+                    .0
+                    .name
+            }
         }
     };
 
