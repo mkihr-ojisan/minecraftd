@@ -5,6 +5,8 @@ use std::{
 
 use anyhow::bail;
 
+use crate::config::get_config;
+
 static PORT_POOL: OnceLock<Mutex<PortPool>> = OnceLock::new();
 
 #[derive(Debug)]
@@ -19,10 +21,12 @@ pub struct Port {
     port: u16,
 }
 
-pub fn init_port_pool(start: u16, end: u16) {
+pub fn init_port_pool() {
+    let config = get_config();
+
     let pool = PortPool {
-        start,
-        end,
+        start: config.port.min,
+        end: config.port.max,
         used_ports: HashSet::new(),
     };
     PORT_POOL

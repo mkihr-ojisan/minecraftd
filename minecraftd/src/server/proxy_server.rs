@@ -15,9 +15,14 @@ use tokio::{
     signal::unix::{SignalKind, signal},
 };
 
-use crate::server::runner::{self, ServerStatus};
+use crate::{
+    config::get_config,
+    server::runner::{self, ServerStatus},
+};
 
-pub async fn start(bind_address: &str) -> anyhow::Result<()> {
+pub async fn start() -> anyhow::Result<()> {
+    let bind_address = &get_config().proxy_server.bind_address;
+
     let listener = tokio::net::TcpListener::bind(bind_address)
         .await
         .with_context(|| format!("Failed to bind proxy server to address {}", bind_address))?;

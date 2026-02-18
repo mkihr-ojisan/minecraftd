@@ -1,8 +1,6 @@
-use clap::Parser;
+use crate::{config::init_config, lock::Lock};
 
-use crate::lock::Lock;
-
-mod cli;
+mod config;
 mod lock;
 mod port;
 mod server;
@@ -25,12 +23,12 @@ async fn main() {
 async fn start() -> anyhow::Result<()> {
     let _lock = Lock::acquire()?;
 
-    let args = cli::Cli::parse();
+    init_config().await?;
 
-    port::init_port_pool(args.port_min, args.port_max);
+    port::init_port_pool();
 
     tokio::spawn(async move {
-        if let Err(e) = server::proxy_server::start(&args.proxy_server_bind_address).await {
+        if let Err(e) = server::proxy_server::start().await {
             error!("Proxy server error: {e:?}");
         }
     });
