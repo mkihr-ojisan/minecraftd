@@ -729,6 +729,14 @@ async fn add_extension(args: ExtensionsAddArgs) -> anyhow::Result<()> {
     .with_starting_cursor(latest_stable_index)
     .prompt()?;
 
+    let auto_update = if let Some(auto_update) = args.auto_update {
+        auto_update
+    } else {
+        inquire::Confirm::new("Enable auto-updates for this extension?")
+            .with_default(false)
+            .prompt()?
+    };
+
     let pb = indicatif::ProgressBar::new_spinner();
     pb.set_message("Adding extension to server...");
     pb.enable_steady_tick(Duration::from_millis(100));
@@ -747,6 +755,7 @@ async fn add_extension(args: ExtensionsAddArgs) -> anyhow::Result<()> {
             &extension.id,
             &extension_version.0.id,
             args.allow_incompatible_versions,
+            auto_update,
         )
         .await
         .context("Failed to add extension to server")?;

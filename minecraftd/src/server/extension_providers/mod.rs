@@ -74,6 +74,30 @@ pub trait ExtensionProvider: Send + Sync {
             Ok(path)
         })
     }
+
+    fn is_newer_version_available<'a>(
+        &'a self,
+        type_: ExtensionType,
+        server_version: &'a str,
+        extension_id: &'a str,
+        current_extension_version_id: &'a str,
+    ) -> BoxedFuture<'a, anyhow::Result<Option<ExtensionVersionInfo>>> {
+        Box::pin(async move {
+            let versions = self
+                .get_extension_versions(type_, server_version, extension_id, false)
+                .await?;
+
+            let Some(latest_stable_version) = versions
+                .into_iter()
+                .take_while(|version| version.id != current_extension_version_id)
+                .find(|version| version.is_stable)
+            else {
+                return Ok(None);
+            };
+
+            Ok(Some(latest_stable_version))
+        })
+    }
 }
 
 pub struct ExtensionInfo {

@@ -67,6 +67,7 @@ where
         extension_id: &str,
         extension_version_id: &str,
         allow_incompatible_versions: bool,
+        auto_update: bool,
     ) -> impl Future<Output = Result<AddExtensionResponse, E>> + Send;
     fn get_extension_id_by_url(
         url: &str,
@@ -402,6 +403,7 @@ where
                 &req.extension_id,
                 &req.extension_version_id,
                 req.allow_incompatible_versions,
+                req.auto_update,
             )
             .await?;
 

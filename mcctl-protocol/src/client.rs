@@ -366,6 +366,7 @@ impl Client {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn add_extension(
         &mut self,
         server_dir: impl Into<String>,
@@ -374,6 +375,7 @@ impl Client {
         extension_id: impl Into<String>,
         extension_version_id: impl Into<String>,
         allow_incompatible_versions: bool,
+        auto_update: bool,
     ) -> Result<AddExtensionResponse, Error> {
         let response_payload = self
             .send_request(RequestPayload::AddExtensionRequest(AddExtensionRequest {
@@ -383,6 +385,7 @@ impl Client {
                 extension_id: extension_id.into(),
                 extension_version_id: extension_version_id.into(),
                 allow_incompatible_versions,
+                auto_update,
             }))
             .await?;
 

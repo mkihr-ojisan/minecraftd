@@ -429,7 +429,7 @@ async fn do_start_server(
         })?;
 
     if manifest.auto_update {
-        update_server_if_newer_version_is_available(
+        update_server_and_extensions_if_newer_version_is_available(
             &server_dir,
             server_implementation,
             &mut manifest,
@@ -513,11 +513,13 @@ async fn do_start_server(
     Ok(())
 }
 
-async fn update_server_if_newer_version_is_available(
+async fn update_server_and_extensions_if_newer_version_is_available(
     server_dir: &Path,
     server_implementation: &dyn ServerImplementation,
     manifest: &mut ServerManifest,
 ) -> anyhow::Result<()> {
+    let mut updated = false;
+
     if let Some((version, build)) = server_implementation
         .is_newer_version_available(&manifest.version, &manifest.build, false)
         .await?
@@ -529,12 +531,35 @@ async fn update_server_if_newer_version_is_available(
         manifest.version = version.name;
         manifest.build = build.name;
 
-        manifest.save(server_dir).await.with_context(|| {
-            format!(
-                "Failed to save updated manifest for server at '{}'",
-                server_dir.display()
+        updated = true;
+    }
+
+    for extension in &mut manifest.extensions {
+        let provider = get_extension_provider(&extension.provider)
+            .with_context(|| format!("Unknown extension provider '{}'", extension.provider))?;
+
+        if let Some(new_version) = provider
+            .is_newer_version_available(
+                extension.type_,
+                &manifest.version,
+                &extension.id,
+                &extension.version_id,
             )
-        })?;
+            .await
+            .unwrap_or(None)
+        {
+            info!(
+                "New version '{}' is available for extension '{}'. Updating manifest.",
+                new_version.version, extension.name
+            );
+            extension.version_id = new_version.id;
+
+            updated = true;
+        }
+    }
+
+    if updated {
+        manifest.save(server_dir).await?;
     }
 
     Ok(())

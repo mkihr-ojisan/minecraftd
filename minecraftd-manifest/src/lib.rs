@@ -55,6 +55,8 @@ pub struct ExntensionEntry {
     pub provider: String,
     pub id: String,
     pub version_id: String,
+    #[serde(default)]
+    pub auto_update: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

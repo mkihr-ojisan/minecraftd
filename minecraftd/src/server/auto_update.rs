@@ -3,7 +3,9 @@ use std::time::Duration;
 use minecraft_protocol::text_component::{Color, Object, TextComponent};
 use tokio::task::JoinSet;
 
-use crate::server::{implementations::get_server_implementation, runner};
+use crate::server::{
+    extension_providers::get_extension_provider, implementations::get_server_implementation, runner,
+};
 
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_hours(24);
 const WAIT_UNTIL_ALL_PLAYERS_LOG_OUT_TIMEOUT: Duration = Duration::from_hours(1);
@@ -47,19 +49,46 @@ async fn do_update() -> anyhow::Result<()> {
 
         debug!("Checking for updates for server {id}");
 
-        let Some((version, build)) = server_implementation
+        let mut update_available = false;
+
+        if let Some((version, build)) = server_implementation
             .is_newer_version_available(&manifest.version, &manifest.build, true)
             .await?
-        else {
-            continue;
+        {
+            debug!(
+                "New version available for server {id} (version: {}, build: {})",
+                version.name, build.name
+            );
+            update_available = true;
         };
 
-        drop(manifest);
+        for extension in &manifest.extensions {
+            let extension_provider = get_extension_provider(&extension.provider)
+                .expect("Extension provider should exist since the server is running");
+            if let Some(new_version) = extension_provider
+                .is_newer_version_available(
+                    extension.type_,
+                    &manifest.version,
+                    &extension.id,
+                    &extension.version_id,
+                )
+                .await
+                .unwrap_or(None)
+            {
+                debug!(
+                    "New version available for extension {} (version: {})",
+                    extension.name, new_version.version
+                );
+                update_available = true;
+            }
+        }
 
-        debug!(
-            "New version available for server {id} (version: {}, build: {})",
-            version.name, build.name
-        );
+        if !update_available {
+            debug!("No updates available for server {id}");
+            continue;
+        }
+
+        drop(manifest);
 
         join_set.spawn(async move {
             let result: anyhow::Result<()> = async move {

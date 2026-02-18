@@ -219,6 +219,7 @@ pub async fn add_extension(
     extension_id: &str,
     extension_version_id: &str,
     allow_incompatible_versions: bool,
+    auto_update: bool,
 ) -> anyhow::Result<AddExtensionResult> {
     if runner::is_server_running(server_dir).await? {
         bail!("Cannot add extension while server is running");
@@ -230,6 +231,7 @@ pub async fn add_extension(
 
     let provider = get_extension_provider(provider).context("Unknown extension provider")?;
 
+    #[allow(clippy::too_many_arguments)]
     #[async_recursion::async_recursion]
     async fn do_add_extension(
         manifest: &mut ServerManifest,
@@ -239,6 +241,7 @@ pub async fn add_extension(
         extension_id: &str,
         extension_version_id: Option<&str>,
         allow_incompatible_versions: bool,
+        auto_update: bool,
     ) -> anyhow::Result<()> {
         // check if extension is already added with the same version (if version is not specified, just check if extension is already added)
         if manifest.extensions.iter().any(|m| {
@@ -295,6 +298,7 @@ pub async fn add_extension(
             provider: provider.name().to_string(),
             id: extension_id.to_string(),
             version_id: version_info.id.clone(),
+            auto_update,
         });
 
         added_extensions.push(extension_info);
@@ -308,6 +312,7 @@ pub async fn add_extension(
                 &dependency.extension_id,
                 dependency.extension_version_id.as_deref(),
                 allow_incompatible_versions,
+                auto_update,
             )
             .await
             .context(format!(
@@ -329,6 +334,7 @@ pub async fn add_extension(
         extension_id,
         Some(extension_version_id),
         allow_incompatible_versions,
+        auto_update,
     )
     .await?;
 

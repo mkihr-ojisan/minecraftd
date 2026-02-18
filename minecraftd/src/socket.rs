@@ -284,6 +284,7 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
         extension_id: &str,
         extension_version_id: &str,
         allow_incompatible_versions: bool,
+        auto_update: bool,
     ) -> anyhow::Result<AddExtensionResponse> {
         let result = server::add_extension(
             server_dir,
@@ -295,6 +296,7 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
             extension_id,
             extension_version_id,
             allow_incompatible_versions,
+            auto_update,
         )
         .await?;
 

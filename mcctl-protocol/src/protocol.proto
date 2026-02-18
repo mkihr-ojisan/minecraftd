@@ -227,6 +227,7 @@ message AddExtensionRequest {
   string extension_id = 4;
   string extension_version_id = 5;
   bool allow_incompatible_versions = 6;
+  bool auto_update = 7;
 }
 
 message AddExtensionResponse {

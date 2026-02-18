@@ -123,6 +123,9 @@ pub struct ExtensionsAddArgs {
     /// Allow adding mods that are incompatible with the server version.
     #[arg(long)]
     pub allow_incompatible_versions: bool,
+    /// Enable auto-updates for the mod/plugin.
+    #[arg(long)]
+    pub auto_update: Option<bool>,
     /// The URL of the mod/plugin to add.
     /// Currently only Modrinth is supported.
     /// If not specified, you will be prompted to search for mods/plugins.
