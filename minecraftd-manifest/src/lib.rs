@@ -23,6 +23,8 @@ pub struct ServerManifest {
     #[serde(default)]
     pub auto_start: bool,
     #[serde(default)]
+    pub auto_update: bool,
+    #[serde(default)]
     pub connection: Connection,
     #[serde(default)]
     pub extensions: Vec<ExntensionEntry>,
@@ -92,6 +94,7 @@ impl ServerManifest {
             java_runtime,
             restart_on_failure: true,
             auto_start: true,
+            auto_update: false,
             connection: Connection::Direct,
             extensions: Vec::new(),
         }

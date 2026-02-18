@@ -7,17 +7,23 @@ use std::{
 };
 
 use anyhow::{Context, bail};
+use minecraft_protocol::text_component::TextComponent;
 use minecraftd_manifest::{Connection, ExtensionType, ServerManifest};
 use pty_process::Pty;
 use rand::distr::{Alphanumeric, SampleString};
-use tokio::{process::Child, sync::Mutex, task::JoinSet, time::timeout};
+use tokio::{
+    process::Child,
+    sync::{MappedMutexGuard, Mutex, MutexGuard},
+    task::JoinSet,
+    time::timeout,
+};
 use uuid::Uuid;
 
 use crate::{
     port::Port,
     server::{
         extension_providers::{extension_cache_root_dir, get_extension_provider},
-        implementations::get_server_implementation,
+        implementations::{ServerImplementation, get_server_implementation},
         java_runtime::JavaRuntimeExt,
         runner::{
             auto_start::{
@@ -46,6 +52,7 @@ const PTY_DEFAULT_ROWS: u16 = 24;
 const PTY_DEFAULT_COLS: u16 = 80;
 const REQUEST_STOP_RETRY_LIMIT: usize = 5;
 const REQUEST_STOP_RETRY_INTERVAL_SECS: u64 = 10;
+const WAIT_FOR_PLAYER_LOGOUT_INTERVAL_SECS: u64 = 60;
 
 static RUNNER: LazyLock<Mutex<Runner>> = LazyLock::new(|| Mutex::new(Runner::new()));
 
@@ -127,6 +134,14 @@ pub async fn get_server_status(id: Uuid) -> Option<ServerStatus> {
     runner.running_servers.get(&id).map(|s| s.status.get())
 }
 
+pub async fn get_server_dir(id: Uuid) -> Option<PathBuf> {
+    let runner = RUNNER.lock().await;
+    runner
+        .running_servers
+        .get(&id)
+        .map(|s| s.server_dir.clone())
+}
+
 pub async fn get_server_port(id: Uuid) -> Option<u16> {
     let runner = RUNNER.lock().await;
     runner
@@ -178,6 +193,11 @@ pub async fn get_running_servers() -> Vec<RunningServerInfo> {
     }
 
     servers
+}
+
+pub async fn get_running_server_ids() -> Vec<Uuid> {
+    let runner = RUNNER.lock().await;
+    runner.running_servers.iter().map(|s| s.id).collect()
 }
 
 pub async fn start_server(server_dir: &Path) -> anyhow::Result<()> {
@@ -299,6 +319,78 @@ pub async fn shutdown() {
     join_set.join_all().await;
 }
 
+pub async fn wait_until_all_players_log_out(id: Uuid) -> anyhow::Result<()> {
+    loop {
+        {
+            let runner = RUNNER.lock().await;
+
+            let server = runner
+                .running_servers
+                .get(&id)
+                .context("Server is not running")?;
+
+            if server.status.get() == ServerStatus::Ready {
+                if let Some(players) =
+                    server_list_ping((Ipv4Addr::LOCALHOST, server.server_port.port()))
+                        .await
+                        .ok()
+                        .and_then(|ping| ping.players)
+                    && players.online == 0
+                {
+                    return Ok(());
+                }
+            } else {
+                bail!("Server is no longer in ready state");
+            }
+        }
+
+        tokio::time::sleep(Duration::from_secs(WAIT_FOR_PLAYER_LOGOUT_INTERVAL_SECS)).await;
+    }
+}
+
+pub async fn get_server_manifest(id: Uuid) -> Option<MappedMutexGuard<'static, ServerManifest>> {
+    let runner = RUNNER.lock().await;
+
+    runner.running_servers.get(&id)?;
+
+    Some(MutexGuard::map(runner, move |r| {
+        let server = r
+            .running_servers
+            .get_mut(&id)
+            .expect("Server should exist since we have the lock");
+        &mut server.manifest
+    }))
+}
+
+pub async fn tellraw(id: Uuid, target: &str, message: TextComponent) -> anyhow::Result<()> {
+    let runner = RUNNER.lock().await;
+
+    let server = runner
+        .running_servers
+        .get(&id)
+        .context("Server is not running")?;
+
+    if server.status.get() != ServerStatus::Ready {
+        bail!("Server is not in ready state");
+    }
+
+    let mut rcon_client = minecraft_rcon::Client::connect(
+        (Ipv4Addr::LOCALHOST, server.rcon_port.port()),
+        &server.rcon_password,
+    )
+    .await?;
+
+    rcon_client
+        .execute_command(&format!(
+            "tellraw {} {}",
+            target,
+            serde_json::to_string(&message)?
+        ))
+        .await?;
+
+    Ok(())
+}
+
 async fn do_start_server(
     server_dir: &Path,
     restarting: bool,
@@ -325,8 +417,25 @@ async fn do_start_server(
     };
     debug!("Assigned server ID: {}", id);
 
-    let manifest = ServerManifest::load(&server_dir).await?;
+    let mut manifest = ServerManifest::load(&server_dir).await?;
     debug!("Loaded server manifest: {:?}", manifest);
+
+    let server_implementation = get_server_implementation(&manifest.server_implementation)
+        .with_context(|| {
+            format!(
+                "Unknown server implementation '{}'",
+                manifest.server_implementation
+            )
+        })?;
+
+    if manifest.auto_update {
+        update_server_if_newer_version_is_available(
+            &server_dir,
+            server_implementation,
+            &mut manifest,
+        )
+        .await?;
+    }
 
     if let Connection::Proxy { hostname } = &manifest.connection
         && runner
@@ -361,13 +470,6 @@ async fn do_start_server(
     let (server_port, rcon_port, rcon_password) =
         prepare_server_properties(&server_dir, &manifest).await?;
 
-    let server_implementation = get_server_implementation(&manifest.server_implementation)
-        .with_context(|| {
-            format!(
-                "Unknown server implementation '{}'",
-                manifest.server_implementation
-            )
-        })?;
     prepare_extensions(&server_dir, &manifest).await?;
 
     manifest.java_runtime.prepare().await?;
@@ -407,6 +509,33 @@ async fn do_start_server(
         pid,
         running_since: Instant::now(),
     });
+
+    Ok(())
+}
+
+async fn update_server_if_newer_version_is_available(
+    server_dir: &Path,
+    server_implementation: &dyn ServerImplementation,
+    manifest: &mut ServerManifest,
+) -> anyhow::Result<()> {
+    if let Some((version, build)) = server_implementation
+        .is_newer_version_available(&manifest.version, &manifest.build, false)
+        .await?
+    {
+        info!(
+            "New version '{}' build '{}' is available for server implementation '{}'. Updating manifest.",
+            version.name, build.name, manifest.server_implementation
+        );
+        manifest.version = version.name;
+        manifest.build = build.name;
+
+        manifest.save(server_dir).await.with_context(|| {
+            format!(
+                "Failed to save updated manifest for server at '{}'",
+                server_dir.display()
+            )
+        })?;
+    }
 
     Ok(())
 }

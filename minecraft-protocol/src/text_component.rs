@@ -9,7 +9,7 @@ pub enum TextComponent {
     Object(Object),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Object {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,

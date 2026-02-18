@@ -14,7 +14,9 @@ static SERVER_JAR_CACHE_LOCK: Mutex<()> = Mutex::const_new(());
 
 pub trait ServerImplementation: Send + Sync {
     fn name(&self) -> &'static str;
+    /// Ordered from newest to oldest
     fn get_versions<'a>(&'a self) -> BoxedFuture<'a, anyhow::Result<Vec<Version>>>;
+    /// Ordered from newest to oldest
     fn get_builds<'a>(&'a self, version: &'a str) -> BoxedFuture<'a, anyhow::Result<Vec<Build>>>;
     fn default_java_runtime<'a>(
         &'a self,
@@ -80,15 +82,13 @@ pub trait ServerImplementation: Send + Sync {
         Box::pin(async move {
             let versions = self.get_versions().await?;
 
-            for version in versions.into_iter() {
+            for version in versions {
                 if stable && !version.is_stable {
                     continue;
                 }
 
                 let builds = self.get_builds(&version.name).await?;
-                if let Some(build) = builds.into_iter().next()
-                    && (!stable || build.is_stable)
-                {
+                if let Some(build) = builds.into_iter().find(|build| !stable || build.is_stable) {
                     return Ok((version, build));
                 }
             }
@@ -97,6 +97,35 @@ pub trait ServerImplementation: Send + Sync {
                 "Could not find any versions or builds for server implementation '{}'",
                 self.name()
             )
+        })
+    }
+
+    fn is_newer_version_available<'a>(
+        &'a self,
+        current_version: &'a str,
+        current_build: &'a str,
+        stable: bool,
+    ) -> BoxedFuture<'a, anyhow::Result<Option<(Version, Build)>>> {
+        Box::pin(async move {
+            let versions = self.get_versions().await?;
+            for version in versions {
+                if stable && !version.is_stable && version.name != current_version {
+                    continue;
+                }
+
+                let builds = self.get_builds(&version.name).await?;
+                for build in builds {
+                    if version.name == current_version && build.name == current_build {
+                        return Ok(None);
+                    }
+
+                    if !stable || (version.is_stable && build.is_stable) {
+                        return Ok(Some((version, build)));
+                    }
+                }
+            }
+
+            Ok(None)
         })
     }
 }

@@ -11,6 +11,7 @@ use crate::server::{
     java_runtime::JavaRuntimeExt,
 };
 
+pub mod auto_update;
 mod extension_providers;
 mod implementations;
 mod java_runtime;

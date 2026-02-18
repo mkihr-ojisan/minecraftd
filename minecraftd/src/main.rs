@@ -36,6 +36,7 @@ async fn start() -> anyhow::Result<()> {
     });
 
     server::runner::start_auto_start_servers().await;
+    server::auto_update::start();
 
     socket::start_server().await?;
 
