@@ -221,10 +221,6 @@ pub async fn add_extension(
     allow_incompatible_versions: bool,
     auto_update: bool,
 ) -> anyhow::Result<AddExtensionResult> {
-    if runner::is_server_running(server_dir).await? {
-        bail!("Cannot add extension while server is running");
-    }
-
     let mut manifest = ServerManifest::load(server_dir)
         .await
         .context("Failed to load server manifest")?;
