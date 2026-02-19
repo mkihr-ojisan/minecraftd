@@ -31,5 +31,4 @@ serde_yml = "0.0.12"
 sha1 = "0.10.6"
 sha2 = "0.10.9"
 tokio = { version = "1.49.0", features = ["fs", "io-util", "macros", "net", "rt", "signal", "sync"] }
-toml = "1.0.2"
 uuid = { version = "1.20.0", features = ["v4"] }

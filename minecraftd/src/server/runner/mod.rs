@@ -1,6 +1,7 @@
 use std::{
     ffi::{OsStr, OsString},
     net::Ipv4Addr,
+    os::unix::process::ExitStatusExt,
     path::{Path, PathBuf},
     sync::LazyLock,
     time::{Duration, Instant},
@@ -20,6 +21,7 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::{
+    alert::{Alert, Severity, send_alert},
     port::Port,
     server::{
         extension_providers::{extension_cache_root_dir, get_extension_provider},
@@ -800,6 +802,29 @@ fn spawn_process_watcher(id: Uuid, mut process: Child) {
                     .expect("Server should exist");
                 drop(runner);
 
+                if !status.success() {
+                    send_alert("server_crash", || Alert {
+                        severity: Severity::Error,
+                        title: "Server crashed".to_string(),
+                        message: if let Some(code) = status.code() {
+                            format!(
+                                "Server at `{}` crashed with exit code {}",
+                                server.server_dir.display(),
+                                code
+                            )
+                        } else if let Some(signal) = status.signal() {
+                            format!(
+                                "Server at `{}` was killed by signal {}",
+                                server.server_dir.display(),
+                                signal
+                            )
+                        } else {
+                            unreachable!()
+                        },
+                    })
+                    .await;
+                }
+
                 if !status.success()
                     && server.manifest.restart_on_failure
                     && old_status == ServerStatus::Ready
@@ -850,9 +875,19 @@ fn spawn_readiness_checker(id: Uuid, server_port: u16) {
                 return;
             };
             server.status.set(ServerStatus::Ready);
-        }
 
-        info!("Server {id} is now ready");
+            info!("Server {id} is now ready");
+
+            send_alert("server_ready", || Alert {
+                severity: Severity::Info,
+                title: "Server is ready".to_string(),
+                message: format!(
+                    "Server at `{}` is now ready to accept connections",
+                    server.server_dir.display()
+                ),
+            })
+            .await;
+        }
     });
 }
 

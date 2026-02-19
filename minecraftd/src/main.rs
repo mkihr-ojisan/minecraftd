@@ -1,5 +1,6 @@
 use crate::{config::init_config, lock::Lock};
 
+mod alert;
 mod config;
 mod lock;
 mod port;

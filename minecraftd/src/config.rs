@@ -1,5 +1,6 @@
-use std::sync::OnceLock;
+use std::{collections::HashSet, path::PathBuf, sync::OnceLock};
 
+use anyhow::Context;
 use serde::Deserialize;
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -26,12 +27,23 @@ pub struct Config {
     pub port: PortConfig,
     #[serde(default)]
     pub proxy_server: ProxyServerConfig,
+    #[serde(default)]
+    pub alert: AlertConfig,
 }
 
 impl Config {
+    fn config_path() -> anyhow::Result<PathBuf> {
+        let mut path = dirs::config_dir().context("Failed to get config directory")?;
+        path.push(env!("CARGO_PKG_NAME"));
+        path.push("config.yaml");
+        Ok(path)
+    }
+
     async fn load() -> anyhow::Result<Self> {
-        let config_str = tokio::fs::read_to_string("config.toml").await?;
-        let config: Self = toml::from_str(&config_str)?;
+        let config_str = tokio::fs::read_to_string(Self::config_path()?)
+            .await
+            .context("Failed to read config file")?;
+        let config: Self = serde_yml::from_str(&config_str)?;
         Ok(config)
     }
 }
@@ -77,4 +89,26 @@ impl Default for ProxyServerConfig {
 
 fn default_proxy_server_bind_address() -> String {
     "0.0.0.0:25565".to_string()
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct AlertConfig {
+    #[serde(default)]
+    pub webhooks: Vec<WebhookConfig>,
+    #[serde(default)]
+    pub disabled_alert_types: HashSet<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookConfig {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: WebhookType,
+    pub url: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebhookType {
+    Discord,
 }
