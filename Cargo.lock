@@ -172,6 +172,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bridge-protocol"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-build",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1472,6 +1480,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-recursion",
+ "bridge-protocol",
  "bytes",
  "cached",
  "dirs",
