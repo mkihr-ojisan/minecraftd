@@ -7,8 +7,9 @@ import kotlin.concurrent.thread
 
 @Suppress("unused")
 class Plugin : JavaPlugin() {
-    private val socketServer = SocketServer()
-    private val requestHandler = RequestHandler(BukkitApi(this))
+    private val api = BukkitApi(this)
+    private val socketServer = SocketServer(api)
+    private val requestHandler = RequestHandler(api)
 
     override fun onEnable() {
         thread {

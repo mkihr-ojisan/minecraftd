@@ -416,6 +416,23 @@ impl Client {
             }),
         }
     }
+
+    pub async fn get_metrics(
+        &mut self,
+        request: GetMetricsRequest,
+    ) -> Result<GetMetricsResponse, Error> {
+        let response_payload = self
+            .send_request(RequestPayload::GetMetricsRequest(request))
+            .await?;
+
+        match response_payload {
+            Some(ResponsePayload::GetMetricsResponse(result)) => Ok(result),
+            _ => Err(Error::UnexpectedResponseType {
+                expected: "GetMetricsResponse",
+                actual: format!("{response_payload:?}"),
+            }),
+        }
+    }
 }
 
 pub struct TerminalReader {

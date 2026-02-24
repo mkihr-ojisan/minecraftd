@@ -10,6 +10,14 @@ class BukkitApi(private val plugin: Plugin) : Api {
         }.get()
     }
 
+    override fun log_error(message: String) {
+        plugin.logger.severe(message)
+    }
+
+    override fun log_info(message: String) {
+        plugin.logger.info(message)
+    }
+
     override fun getPlayerCount(): Int {
         return Bukkit.getServer().onlinePlayers.size
     }

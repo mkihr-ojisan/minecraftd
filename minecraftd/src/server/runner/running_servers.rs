@@ -25,11 +25,12 @@ impl RunningServers {
 
     pub fn insert(&mut self, server: RunningServer) {
         if let Connection::Proxy { hostname } = &server.manifest.connection {
-            self.hostname_to_id.insert(hostname.to_string(), server.id);
+            self.hostname_to_id
+                .insert(hostname.to_string(), server.manifest.id);
         }
         self.server_dir_to_id
-            .insert(server.server_dir.clone(), server.id);
-        self.servers.insert(server.id, server);
+            .insert(server.server_dir.clone(), server.manifest.id);
+        self.servers.insert(server.manifest.id, server);
     }
 
     pub fn remove(&mut self, id: &Uuid) -> Option<RunningServer> {
@@ -41,16 +42,8 @@ impl RunningServers {
         Some(server)
     }
 
-    pub fn contains(&self, id: &Uuid) -> bool {
-        self.servers.contains_key(id)
-    }
-
     pub fn get(&self, id: &Uuid) -> Option<&RunningServer> {
         self.servers.get(id)
-    }
-
-    pub fn get_mut(&mut self, id: &Uuid) -> Option<&mut RunningServer> {
-        self.servers.get_mut(id)
     }
 
     pub fn get_id_by_hostname(&self, hostname: &str) -> Option<Uuid> {
@@ -70,11 +63,6 @@ impl RunningServers {
             None => return Ok(None),
         };
         Ok(self.servers.get(&id))
-    }
-
-    pub fn get_mut_by_server_dir(&mut self, server_dir: &Path) -> Option<&mut RunningServer> {
-        let id = self.get_id_by_server_dir(server_dir).ok().flatten()?;
-        self.servers.get_mut(&id)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &RunningServer> {

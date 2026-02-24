@@ -8,3 +8,4 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_yml = "0.0.12"
 thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = ["fs"] }
+uuid = { version = "1.21.0", features = ["serde", "v4"] }

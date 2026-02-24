@@ -72,6 +72,17 @@ where
     fn get_extension_id_by_url(
         url: &str,
     ) -> impl Future<Output = Result<GetExtensionIdByUrlResponse, E>> + Send;
+    #[allow(clippy::too_many_arguments)]
+    fn get_metrics(
+        server_dir: &Path,
+        metric: String,
+        start_timestamp: i64,
+        end_timestamp: i64,
+        aggregation: Aggregation,
+        downsample_interval: Option<i64>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> impl Future<Output = Result<GetMetricsResponse, E>> + Send;
 }
 
 pub trait TerminalReader<E>: Send + 'static
@@ -416,6 +427,24 @@ where
 
             Ok(HandleRequestResult::Response(Some(
                 ResponsePayload::GetExtensionIdByUrlResponse(result),
+            )))
+        }
+        RequestPayload::GetMetricsRequest(req) => {
+            let result = H::get_metrics(
+                Path::new(&req.server_dir),
+                req.metric,
+                req.start_timestamp,
+                req.end_timestamp,
+                Aggregation::try_from(req.aggregation)
+                    .map_err(|_| HandleRequestError::Error(Error::InvalidAggregation))?,
+                req.downsample_interval,
+                req.limit,
+                req.offset,
+            )
+            .await?;
+
+            Ok(HandleRequestResult::Response(Some(
+                ResponsePayload::GetMetricsResponse(result),
             )))
         }
     }

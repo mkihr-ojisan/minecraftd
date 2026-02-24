@@ -321,6 +321,46 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
             extension_id: info.id,
         })
     }
+
+    async fn get_metrics(
+        server_dir: &Path,
+        metric: String,
+        start_timestamp: i64,
+        end_timestamp: i64,
+        aggregation: Aggregation,
+        downsample_interval: Option<i64>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> anyhow::Result<GetMetricsResponse> {
+        let data_points = server::runner::query_metrics(
+            server_dir,
+            metric,
+            start_timestamp,
+            end_timestamp,
+            match aggregation {
+                Aggregation::None => tsink::Aggregation::None,
+                Aggregation::Min => tsink::Aggregation::Min,
+                Aggregation::Max => tsink::Aggregation::Max,
+                Aggregation::Avg => tsink::Aggregation::Avg,
+                Aggregation::Sum => tsink::Aggregation::Sum,
+                Aggregation::Last => tsink::Aggregation::Last,
+            },
+            downsample_interval,
+            limit,
+            offset,
+        )
+        .await?;
+
+        Ok(GetMetricsResponse {
+            data_points: data_points
+                .into_iter()
+                .map(|dp| mcctl_protocol::MetricDataPoint {
+                    timestamp: dp.timestamp,
+                    value: dp.value,
+                })
+                .collect(),
+        })
+    }
 }
 
 pub async fn start_server() -> anyhow::Result<()> {

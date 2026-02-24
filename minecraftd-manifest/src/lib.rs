@@ -5,9 +5,11 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerManifest {
+    pub id: Uuid,
     pub name: String,
     pub server_implementation: String,
     pub version: String,
@@ -82,6 +84,7 @@ impl ServerManifest {
         java_runtime: JavaRuntime,
     ) -> Self {
         Self {
+            id: Uuid::new_v4(),
             name: String::new(),
             server_implementation: server_implementation.to_string(),
             version: version.to_string(),

@@ -3,7 +3,7 @@ use std::{
     net::Ipv4Addr,
     os::unix::process::ExitStatusExt,
     path::{Path, PathBuf},
-    sync::LazyLock,
+    sync::{Arc, LazyLock, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -12,12 +12,8 @@ use minecraft_protocol::text_component::TextComponent;
 use minecraftd_manifest::{Connection, ExtensionType, ServerManifest};
 use pty_process::Pty;
 use rand::distr::{Alphanumeric, SampleString};
-use tokio::{
-    process::Child,
-    sync::{MappedMutexGuard, Mutex, MutexGuard},
-    task::JoinSet,
-    time::timeout,
-};
+use tokio::{process::Child, sync::Mutex, task::JoinSet, time::timeout};
+use tsink::{Aggregation, DataPoint, DownsampleOptions, Label, QueryOptions};
 use uuid::Uuid;
 
 use crate::{
@@ -31,6 +27,8 @@ use crate::{
             auto_start::{
                 add_auto_start_directory, get_auto_start_directories, remove_auto_start_directory,
             },
+            bridge::{Bridge, spawn_bridge_connector},
+            metrics::{init_metrics, shutdown_metrics},
             running_servers::RunningServers,
             terminal::{
                 TerminalInput, TerminalOutput, spawn_terminal_reader, spawn_terminal_writer,
@@ -45,6 +43,8 @@ use crate::{
 pub use terminal::{TerminalReader, TerminalWriter};
 
 mod auto_start;
+mod bridge;
+mod metrics;
 mod running_servers;
 mod terminal;
 
@@ -63,10 +63,9 @@ struct Runner {
 }
 
 struct RunningServer {
-    id: Uuid,
     server_dir: PathBuf,
     status: ObservableValue<ServerStatus>,
-    manifest: ServerManifest,
+    manifest: Arc<ServerManifest>,
     terminal_in: tokio::sync::mpsc::Sender<TerminalInput>,
     terminal_out: tokio::sync::broadcast::Sender<TerminalOutput>,
     server_port: ServerPort,
@@ -74,6 +73,7 @@ struct RunningServer {
     rcon_password: String,
     pid: u32,
     running_since: Instant,
+    bridge: OnceLock<Mutex<Bridge>>, // bridge is connected after the server is ready
 }
 
 pub struct RunningServerInfo {
@@ -123,6 +123,12 @@ impl Runner {
             running_servers: RunningServers::new(),
         }
     }
+}
+
+pub async fn init_runner() -> anyhow::Result<()> {
+    init_metrics().await?;
+    start_auto_start_servers().await;
+    Ok(())
 }
 
 pub async fn get_server_id_by_hostname(hostname: &str) -> Option<Uuid> {
@@ -199,7 +205,11 @@ pub async fn get_running_servers() -> Vec<RunningServerInfo> {
 
 pub async fn get_running_server_ids() -> Vec<Uuid> {
     let runner = RUNNER.lock().await;
-    runner.running_servers.iter().map(|s| s.id).collect()
+    runner
+        .running_servers
+        .iter()
+        .map(|s| s.manifest.id)
+        .collect()
 }
 
 pub async fn start_server(server_dir: &Path) -> anyhow::Result<()> {
@@ -213,7 +223,7 @@ pub async fn stop_server(server_dir: &Path) -> anyhow::Result<()> {
         let Some(server) = runner.running_servers.get_by_server_dir(server_dir)? else {
             bail!("Server at '{}' is not running", server_dir.display());
         };
-        id = server.id;
+        id = server.manifest.id;
 
         if server.manifest.auto_start {
             info!(
@@ -234,7 +244,7 @@ pub async fn kill_server(server_dir: &Path) -> anyhow::Result<()> {
         let Some(server) = runner.running_servers.get_by_server_dir(server_dir)? else {
             bail!("Server at '{}' is not running", server_dir.display());
         };
-        id = server.id;
+        id = server.manifest.id;
     }
 
     do_kill_server(id).await
@@ -243,8 +253,8 @@ pub async fn kill_server(server_dir: &Path) -> anyhow::Result<()> {
 pub async fn attach_terminal(
     server_dir: &Path,
 ) -> anyhow::Result<(TerminalReader, TerminalWriter)> {
-    let mut runner = RUNNER.lock().await;
-    let Some(server) = runner.running_servers.get_mut_by_server_dir(server_dir) else {
+    let runner = RUNNER.lock().await;
+    let Some(server) = runner.running_servers.get_by_server_dir(server_dir)? else {
         bail!("Server at '{}' is not running", server_dir.display());
     };
 
@@ -263,7 +273,7 @@ pub async fn wait_ready(server_dir: &Path) -> anyhow::Result<()> {
         let Some(server) = runner.running_servers.get_by_server_dir(server_dir)? else {
             bail!("Server at '{}' is not running", server_dir.display());
         };
-        id = server.id;
+        id = server.manifest.id;
     }
 
     wait_for_server_status(id, ServerStatus::Ready).await
@@ -275,41 +285,21 @@ pub async fn restart_server(server_dir: &Path) -> anyhow::Result<()> {
         let Some(server) = runner.running_servers.get_by_server_dir(server_dir)? else {
             bail!("Server at '{}' is not running", server_dir.display());
         };
-        server.id
+        server.manifest.id
     };
 
     do_stop_server(id, true).await?;
     do_start_server(server_dir, true, false).await
 }
 
-pub async fn start_auto_start_servers() {
-    let auto_start_servers = get_auto_start_directories().await;
-
-    info!("Auto-starting servers: {:?}", auto_start_servers);
-
-    for server_dir in auto_start_servers {
-        tokio::spawn(async move {
-            if let Err(e) = do_start_server(&server_dir, false, true).await {
-                error!(
-                    "Failed to auto-start server at '{}': {:?}",
-                    server_dir.display(),
-                    e
-                );
-                if let Err(e) = remove_auto_start_directory(&server_dir).await {
-                    error!("{e:?}",);
-                }
-            }
-        });
-    }
-}
-
 pub async fn shutdown() {
-    let mut join_set = JoinSet::new();
+    shutdown_metrics().await;
 
+    let mut join_set = JoinSet::new();
     {
         let runner = RUNNER.lock().await;
         for server in runner.running_servers.iter() {
-            let server_id = server.id;
+            let server_id = server.manifest.id;
             join_set.spawn(async move {
                 if let Err(e) = do_stop_server(server_id, false).await {
                     error!("Failed to stop server '{server_id}': {e:?}",);
@@ -317,7 +307,6 @@ pub async fn shutdown() {
             });
         }
     }
-
     join_set.join_all().await;
 }
 
@@ -350,18 +339,10 @@ pub async fn wait_until_all_players_log_out(id: Uuid) -> anyhow::Result<()> {
     }
 }
 
-pub async fn get_server_manifest(id: Uuid) -> Option<MappedMutexGuard<'static, ServerManifest>> {
+pub async fn get_server_manifest(id: Uuid) -> Option<Arc<ServerManifest>> {
     let runner = RUNNER.lock().await;
-
-    runner.running_servers.get(&id)?;
-
-    Some(MutexGuard::map(runner, move |r| {
-        let server = r
-            .running_servers
-            .get_mut(&id)
-            .expect("Server should exist since we have the lock");
-        &mut server.manifest
-    }))
+    let server = runner.running_servers.get(&id)?;
+    Some(server.manifest.clone())
 }
 
 pub async fn tellraw(id: Uuid, target: &str, message: TextComponent) -> anyhow::Result<()> {
@@ -393,6 +374,39 @@ pub async fn tellraw(id: Uuid, target: &str, message: TextComponent) -> anyhow::
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn query_metrics(
+    server_dir: &Path,
+    metric: impl Into<String>,
+    start_timestamp: i64,
+    end_timestamp: i64,
+    aggregation: Aggregation,
+    downsample_interval: Option<i64>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> anyhow::Result<Vec<DataPoint>> {
+    let runner = RUNNER.lock().await;
+    let Some(server) = runner.running_servers.get_by_server_dir(server_dir)? else {
+        bail!("Server at '{}' is not running", server_dir.display());
+    };
+
+    let opts = QueryOptions {
+        labels: vec![Label::new("server_id", server.manifest.id.to_string())],
+        start: start_timestamp,
+        end: end_timestamp,
+        aggregation,
+        downsample: downsample_interval.map(|interval| DownsampleOptions { interval }),
+        limit: limit.map(|l| l as usize),
+        offset: offset.map(|o| o as usize).unwrap_or(0),
+    };
+
+    drop(runner);
+
+    let data_points = metrics::query_metrics(metric, opts).await?;
+
+    Ok(data_points)
+}
+
 async fn do_start_server(
     server_dir: &Path,
     restarting: bool,
@@ -410,14 +424,6 @@ async fn do_start_server(
     }
 
     info!("Starting server at '{}'", server_dir.display());
-
-    let id = loop {
-        let id = Uuid::new_v4();
-        if !runner.running_servers.contains(&id) {
-            break id;
-        }
-    };
-    debug!("Assigned server ID: {}", id);
 
     let mut manifest = ServerManifest::load(&server_dir).await?;
     debug!("Loaded server manifest: {:?}", manifest);
@@ -494,15 +500,14 @@ async fn do_start_server(
     spawn_terminal_writer(pty_writer, term_in_rx);
     spawn_terminal_reader(pty_reader, term_out_tx.clone());
 
-    spawn_process_watcher(id, child);
+    spawn_process_watcher(manifest.id, child);
 
-    spawn_readiness_checker(id, server_port.port());
+    spawn_readiness_checker(manifest.id, server_port.port());
 
     runner.running_servers.insert(RunningServer {
-        id,
         server_dir,
         status: ObservableValue::new(ServerStatus::Starting { restarting }),
-        manifest,
+        manifest: Arc::new(manifest),
         terminal_in: term_in_tx,
         terminal_out: term_out_tx,
         server_port,
@@ -510,6 +515,7 @@ async fn do_start_server(
         rcon_password,
         pid,
         running_since: Instant::now(),
+        bridge: OnceLock::new(),
     });
 
     Ok(())
@@ -870,8 +876,8 @@ fn spawn_readiness_checker(id: Uuid, server_port: u16) {
         }
 
         {
-            let mut runner = RUNNER.lock().await;
-            let Some(server) = runner.running_servers.get_mut(&id) else {
+            let runner = RUNNER.lock().await;
+            let Some(server) = runner.running_servers.get(&id) else {
                 return;
             };
             server.status.set(ServerStatus::Ready);
@@ -887,15 +893,17 @@ fn spawn_readiness_checker(id: Uuid, server_port: u16) {
                 ),
             })
             .await;
+
+            spawn_bridge_connector(id, server.server_dir.clone());
         }
     });
 }
 
 async fn do_stop_server(id: Uuid, restarting: bool) -> anyhow::Result<()> {
     {
-        let mut runner = RUNNER.lock().await;
+        let runner = RUNNER.lock().await;
 
-        let Some(server) = runner.running_servers.get_mut(&id) else {
+        let Some(server) = runner.running_servers.get(&id) else {
             bail!("Server is not running");
         };
 
@@ -1012,4 +1020,25 @@ async fn do_kill_server(id: Uuid) -> anyhow::Result<()> {
         nix::sys::signal::Signal::SIGKILL,
     )?;
     Ok(())
+}
+
+async fn start_auto_start_servers() {
+    let auto_start_servers = get_auto_start_directories().await;
+
+    info!("Auto-starting servers: {:?}", auto_start_servers);
+
+    for server_dir in auto_start_servers {
+        tokio::spawn(async move {
+            if let Err(e) = do_start_server(&server_dir, false, true).await {
+                error!(
+                    "Failed to auto-start server at '{}': {:?}",
+                    server_dir.display(),
+                    e
+                );
+                if let Err(e) = remove_auto_start_directory(&server_dir).await {
+                    error!("{e:?}",);
+                }
+            }
+        });
+    }
 }

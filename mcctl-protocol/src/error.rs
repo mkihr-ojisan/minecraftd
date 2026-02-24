@@ -25,4 +25,6 @@ pub enum Error {
     InvalidUpdateType,
     #[error("Invalid extension type")]
     InvalidExtensionType,
+    #[error("Invalid aggregation")]
+    InvalidAggregation,
 }

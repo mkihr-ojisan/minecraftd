@@ -11,7 +11,7 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import kotlin.concurrent.thread
 
-class SocketServer: Closeable {
+class SocketServer(private val api: Api): Closeable {
     private val sock = AFUNIXServerSocket.newInstance()
     val socketFile = File("minecraftd.sock")
 
@@ -21,6 +21,8 @@ class SocketServer: Closeable {
         }
 
         sock.bind(AFUNIXSocketAddress.of(socketFile))
+
+        api.log_info("Socket server started at ${socketFile.absolutePath}")
 
         while (true) {
             val client = sock.accept()

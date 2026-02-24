@@ -45,6 +45,8 @@ subprojects {
         tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
             // disable "-all" postfix in the generated JAR name
             archiveClassifier.set("")
+            // PaperMC uses an older version of protobuf, so we need to relocate our protobuf dependency to avoid conflicts
+            relocate("com.google.protobuf", "com.mkihr_ojisan.minecraftd.bridge.${project.name}.protobuf")
         }
 
         tasks.named("assemble") {
