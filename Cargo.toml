@@ -1,3 +1,7 @@
 [workspace]
 members = ["mcctl", "mcctl-protocol", "minecraft-protocol", "minecraftd", "apis/mojang-piston-api", "minecraft-rcon", "minecraftd-manifest", "apis/modrinth-api", "bridge-protocol"]
 resolver = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
