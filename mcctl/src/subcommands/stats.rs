@@ -46,7 +46,7 @@ struct App {
 
     exit: bool,
     next_update: Instant,
-    chart_type: ChartType,
+    chart_scale: ChartScale,
 
     tps_data: Vec<(f64, f64)>,
     mspt_data: Vec<(f64, f64)>,
@@ -61,10 +61,100 @@ struct App {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ChartType {
-    Realtime,
-    Minutely,
-    Hourly,
+enum ChartScale {
+    Minute,
+    Hour,
+    Day,
+    Week,
+    Month,
+}
+
+impl ChartScale {
+    fn resolution(&self) -> i64 {
+        match self {
+            ChartScale::Minute => 1,
+            ChartScale::Hour => 15,
+            ChartScale::Day => 60 * 15,
+            ChartScale::Week => 3600,
+            ChartScale::Month => 3600 * 4,
+        }
+    }
+
+    fn update_interval(&self) -> Duration {
+        Duration::from_secs(self.resolution() as u64)
+    }
+
+    fn start_timestamp(&self, now: i64) -> i64 {
+        self.end_timestamp(now)
+            - match self {
+                ChartScale::Minute => 60,
+                ChartScale::Hour => 3600,
+                ChartScale::Day => 3600 * 24,
+                ChartScale::Week => 3600 * 24 * 7,
+                ChartScale::Month => 3600 * 24 * 30,
+            }
+    }
+
+    fn end_timestamp(&self, now: i64) -> i64 {
+        match self.downsample_interval() {
+            Some(interval) => (now + interval - 1) / interval * interval,
+            None => now,
+        }
+    }
+
+    fn aggregation(&self) -> Aggregation {
+        match self {
+            ChartScale::Minute => Aggregation::None,
+            _ => Aggregation::Avg,
+        }
+    }
+
+    fn downsample_interval(&self) -> Option<i64> {
+        match self {
+            ChartScale::Minute => None,
+            _ => Some(self.resolution()),
+        }
+    }
+
+    fn x_axis_bounds(&self) -> [f64; 2] {
+        match self {
+            ChartScale::Minute => [-60.0, -1.0],
+            ChartScale::Hour => [-3600.0, -1.0],
+            ChartScale::Day => [-3600.0 * 24.0, -1.0],
+            ChartScale::Week => [-3600.0 * 24.0 * 7.0, -1.0],
+            ChartScale::Month => [-3600.0 * 24.0 * 30.0, -1.0],
+        }
+    }
+
+    fn x_axis_labels(&self) -> &'static [&'static str] {
+        match self {
+            ChartScale::Minute => &["-60s", "-30s", "Now"],
+            ChartScale::Hour => &["-60m", "-30m", "Now"],
+            ChartScale::Day => &["-24h", "-12h", "Now"],
+            ChartScale::Week => &["-7d", "Now"],
+            ChartScale::Month => &["-30d", "-15d", "Now"],
+        }
+    }
+
+    fn next_scale(&self) -> Option<Self> {
+        match self {
+            ChartScale::Minute => Some(ChartScale::Hour),
+            ChartScale::Hour => Some(ChartScale::Day),
+            ChartScale::Day => Some(ChartScale::Week),
+            ChartScale::Week => Some(ChartScale::Month),
+            ChartScale::Month => None,
+        }
+    }
+
+    fn prev_scale(&self) -> Option<Self> {
+        match self {
+            ChartScale::Minute => None,
+            ChartScale::Hour => Some(ChartScale::Minute),
+            ChartScale::Day => Some(ChartScale::Hour),
+            ChartScale::Week => Some(ChartScale::Day),
+            ChartScale::Month => Some(ChartScale::Week),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -79,7 +169,7 @@ impl App {
             server_dir,
             exit: false,
             next_update: Instant::now(),
-            chart_type: ChartType::Realtime,
+            chart_scale: ChartScale::Minute,
 
             tps_data: Vec::new(),
             mspt_data: Vec::new(),
@@ -123,10 +213,12 @@ impl App {
                     } else {
                         match key_event.code {
                             KeyCode::Char('q') => self.quit(),
-                            KeyCode::Char('r') => self.update_now()?,
-                            KeyCode::Char('t') => self.switch_chart_type()?,
+                            KeyCode::Char('+') => self.zoom_in()?,
+                            KeyCode::Char('-') => self.zoom_out()?,
                             KeyCode::Up => self.scroll_up(state),
                             KeyCode::Down => self.scroll_down(state),
+                            KeyCode::PageUp => self.page_up(state),
+                            KeyCode::PageDown => self.page_down(state),
                             _ => {}
                         }
                     }
@@ -146,22 +238,10 @@ impl App {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_secs() as i64;
-
-            let start_timestamp = match self.chart_type {
-                ChartType::Realtime => now - 60,
-                ChartType::Minutely => now - 60 * 60,
-                ChartType::Hourly => now - 60 * 60 * 24,
-            };
-            let aggregation = match self.chart_type {
-                ChartType::Realtime => Aggregation::None,
-                ChartType::Minutely => Aggregation::Avg,
-                ChartType::Hourly => Aggregation::Avg,
-            };
-            let downsample_interval = match self.chart_type {
-                ChartType::Realtime => None,
-                ChartType::Minutely => Some(60),
-                ChartType::Hourly => Some(3600),
-            };
+            let start_timestamp = self.chart_scale.start_timestamp(now);
+            let end_timestamp = self.chart_scale.end_timestamp(now);
+            let aggregation = self.chart_scale.aggregation() as i32;
+            let downsample_interval = self.chart_scale.downsample_interval();
 
             macro_rules! get_data {
                 ($metric:expr) => {
@@ -170,8 +250,8 @@ impl App {
                             server_dir: self.server_dir.clone(),
                             metric: $metric.to_string(),
                             start_timestamp,
-                            end_timestamp: now + 1,
-                            aggregation: aggregation as i32,
+                            end_timestamp,
+                            aggregation,
                             downsample_interval,
                             limit: None,
                             offset: None,
@@ -199,13 +279,8 @@ impl App {
             anyhow::Result::<()>::Ok(())
         })?;
 
-        let update_interval = match self.chart_type {
-            ChartType::Realtime => Duration::from_secs(1),
-            ChartType::Minutely => Duration::from_secs(60),
-            ChartType::Hourly => Duration::from_secs(3600),
-        };
         while Instant::now() >= self.next_update {
-            self.next_update += update_interval;
+            self.next_update += self.chart_scale.update_interval();
         }
 
         Ok(())
@@ -223,13 +298,28 @@ impl App {
         state.scroll_view_state.scroll_down();
     }
 
-    fn switch_chart_type(&mut self) -> anyhow::Result<()> {
-        self.chart_type = match self.chart_type {
-            ChartType::Realtime => ChartType::Minutely,
-            ChartType::Minutely => ChartType::Hourly,
-            ChartType::Hourly => ChartType::Realtime,
-        };
-        self.update_now()
+    fn page_up(&mut self, state: &mut AppState) {
+        state.scroll_view_state.scroll_page_up();
+    }
+
+    fn page_down(&mut self, state: &mut AppState) {
+        state.scroll_view_state.scroll_page_down();
+    }
+
+    fn zoom_in(&mut self) -> anyhow::Result<()> {
+        if let Some(prev_scale) = self.chart_scale.prev_scale() {
+            self.chart_scale = prev_scale;
+            self.update_now()?;
+        }
+        Ok(())
+    }
+
+    fn zoom_out(&mut self) -> anyhow::Result<()> {
+        if let Some(next_scale) = self.chart_scale.next_scale() {
+            self.chart_scale = next_scale;
+            self.update_now()?;
+        }
+        Ok(())
     }
 
     fn update_now(&mut self) -> anyhow::Result<()> {
@@ -244,6 +334,16 @@ impl StatefulWidget for &App {
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut AppState) {
         const NUM_CHARTS: usize = 8;
         const CHART_HEIGHT: u16 = 11;
+
+        let layout = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]);
+        let [title_bar_area, chart_area] = layout.areas(area);
+
+        let title_bar = Paragraph::new(Line::from(vec![
+            format!(" Minecraft Server Stats - '{}'", self.server_dir).bold(),
+            " (Press 'q' to quit, '+'/'-' to zoom, Up/Down/PageUp/PageDown to scroll)".into(),
+        ]))
+        .bg(Color::Blue);
+        title_bar.render(title_bar_area, buf);
 
         let height = CHART_HEIGHT * NUM_CHARTS as u16;
         let mut scroll_view = ScrollView::new(Size {
@@ -268,7 +368,7 @@ impl StatefulWidget for &App {
                 default_y_bounds: (15.0, 25.0),
                 is_integer: false,
                 unit: ("tick/s", "ticks/s"),
-                chart_type: self.chart_type,
+                chart_scale: self.chart_scale,
             },
             areas[0],
         );
@@ -280,7 +380,7 @@ impl StatefulWidget for &App {
                 default_y_bounds: (0.0, 60.0),
                 is_integer: false,
                 unit: ("ms/tick", "ms/tick"),
-                chart_type: self.chart_type,
+                chart_scale: self.chart_scale,
             },
             areas[1],
         );
@@ -295,7 +395,7 @@ impl StatefulWidget for &App {
                 label2: "Used",
                 unit: "MiB",
                 scale: 1048576.0,
-                chart_type: self.chart_type,
+                chart_scale: self.chart_scale,
             },
             areas[2],
         );
@@ -307,7 +407,7 @@ impl StatefulWidget for &App {
                 default_y_bounds: (0.0, 100.0),
                 is_integer: false,
                 unit: ("%", "%"),
-                chart_type: self.chart_type,
+                chart_scale: self.chart_scale,
             },
             areas[3],
         );
@@ -319,7 +419,7 @@ impl StatefulWidget for &App {
                 default_y_bounds: (0.0, 10.0),
                 is_integer: true,
                 unit: ("player", "players"),
-                chart_type: self.chart_type,
+                chart_scale: self.chart_scale,
             },
             areas[4],
         );
@@ -331,7 +431,7 @@ impl StatefulWidget for &App {
                 default_y_bounds: (0.0, 1000.0),
                 is_integer: true,
                 unit: ("entity", "entities"),
-                chart_type: self.chart_type,
+                chart_scale: self.chart_scale,
             },
             areas[5],
         );
@@ -343,7 +443,7 @@ impl StatefulWidget for &App {
                 default_y_bounds: (0.0, 1000.0),
                 is_integer: true,
                 unit: ("chunk", "chunks"),
-                chart_type: self.chart_type,
+                chart_scale: self.chart_scale,
             },
             areas[6],
         );
@@ -358,12 +458,12 @@ impl StatefulWidget for &App {
                 label2: "Sent",
                 unit: "KiB/s",
                 scale: 1024.0,
-                chart_type: self.chart_type,
+                chart_scale: self.chart_scale,
             },
             areas[7],
         );
 
-        scroll_view.render(area, buf, &mut state.scroll_view_state);
+        scroll_view.render(chart_area, buf, &mut state.scroll_view_state);
     }
 }
 
@@ -373,7 +473,7 @@ struct SingleChart<'a> {
     default_y_bounds: (f64, f64),
     is_integer: bool,
     unit: (&'a str, &'a str),
-    chart_type: ChartType,
+    chart_scale: ChartScale,
 }
 impl Widget for SingleChart<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
@@ -407,16 +507,13 @@ impl Widget for SingleChart<'_> {
         .block(block)
         .x_axis(
             Axis::default()
-                .bounds(match self.chart_type {
-                    ChartType::Realtime => [-60.0, 0.0],
-                    ChartType::Minutely => [-3600.0, 0.0],
-                    ChartType::Hourly => [-86400.0, 0.0],
-                })
-                .labels(match self.chart_type {
-                    ChartType::Realtime => ["-60s", "-30s", "Now"],
-                    ChartType::Minutely => ["-60m", "-30m", "Now"],
-                    ChartType::Hourly => ["-24h", "-12h", "Now"],
-                }),
+                .bounds(self.chart_scale.x_axis_bounds())
+                .labels(
+                    self.chart_scale
+                        .x_axis_labels()
+                        .iter()
+                        .map(|s| Span::from(*s)),
+                ),
         )
         .y_axis(
             Axis::default().bounds([y_min, y_max]).labels(
@@ -432,7 +529,7 @@ impl Widget for SingleChart<'_> {
 
         chart.render(area, buf);
 
-        if self.chart_type == ChartType::Realtime
+        if self.chart_scale == ChartScale::Minute
             && let Some((_, latest_value)) = self.data.last()
         {
             let value_str = if self.is_integer {
@@ -480,7 +577,7 @@ struct DoubleChart<'a> {
     label2: &'a str,
     unit: &'a str,
     scale: f64,
-    chart_type: ChartType,
+    chart_scale: ChartScale,
 }
 
 impl Widget for DoubleChart<'_> {
@@ -523,16 +620,13 @@ impl Widget for DoubleChart<'_> {
         .block(block)
         .x_axis(
             Axis::default()
-                .bounds(match self.chart_type {
-                    ChartType::Realtime => [-60.0, 0.0],
-                    ChartType::Minutely => [-3600.0, 0.0],
-                    ChartType::Hourly => [-86400.0, 0.0],
-                })
-                .labels(match self.chart_type {
-                    ChartType::Realtime => ["-60s", "-30s", "Now"],
-                    ChartType::Minutely => ["-60m", "-30m", "Now"],
-                    ChartType::Hourly => ["-24h", "-12h", "Now"],
-                }),
+                .bounds(self.chart_scale.x_axis_bounds())
+                .labels(
+                    self.chart_scale
+                        .x_axis_labels()
+                        .iter()
+                        .map(|s| Span::from(*s)),
+                ),
         )
         .y_axis(
             Axis::default().bounds([y_min, y_max]).labels(
@@ -547,7 +641,7 @@ impl Widget for DoubleChart<'_> {
 
         chart.render(area, buf);
 
-        if self.chart_type == ChartType::Realtime
+        if self.chart_scale == ChartScale::Minute
             && let Some((_, latest_allocated)) = self.data1.last()
             && let Some((_, latest_used)) = self.data2.last()
         {
