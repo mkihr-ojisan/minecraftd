@@ -181,6 +181,14 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
         send_error_message!("Server is not running or does not exist".to_string());
     };
 
+    let server = proxy_server
+        .servers
+        .get(&server_id)
+        .expect("Server ID was found in hostname_to_server_id but not in servers map");
+    let server_port = server.port;
+    let stats = server.stats.clone();
+    drop(proxy_server);
+
     match runner::get_server_status(server_id).await {
         Some(ServerStatus::Starting { restarting: false }) => {
             send_error_message!("Server is starting up, please try again later".to_string());
@@ -205,12 +213,7 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
 
     info!("Forwarding client {peer_addr} to server with ID {server_id}",);
 
-    let server = proxy_server
-        .servers
-        .get(&server_id)
-        .expect("Server ID was found in hostname_to_server_id but not in servers map");
-
-    let mut server_socket = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port))
+    let mut server_socket = TcpStream::connect((Ipv4Addr::LOCALHOST, server_port))
         .await
         .context("Failed to connect to backend server")?;
     server_socket
@@ -223,10 +226,6 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
         .context("Failed to forward handshake packet to backend server")?;
 
     let mut socket = raw_packet_stream.into_inner();
-
-    let stats = server.stats.clone();
-
-    drop(proxy_server);
 
     let result: anyhow::Result<()> = async {
         loop {
