@@ -5,5 +5,6 @@ pub mod kill;
 pub mod ps;
 pub mod restart;
 pub mod start;
+pub mod stats;
 pub mod stop;
 pub mod update;

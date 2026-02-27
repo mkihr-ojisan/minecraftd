@@ -4,12 +4,12 @@ plugins {
 
 repositories {
     spigotRepos {
-        spigotmc()
+        papermc()
     }
 }
 
 dependencies {
-    compileOnly(spigots.spigot.api)
+    compileOnly("com.destroystokyo.paper:paper-api:1.16.5-R0.1-20211218.082619-371")
 }
 
 spigot {

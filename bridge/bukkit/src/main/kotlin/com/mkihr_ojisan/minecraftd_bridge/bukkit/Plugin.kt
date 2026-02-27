@@ -7,11 +7,15 @@ import kotlin.concurrent.thread
 
 @Suppress("unused")
 class Plugin : JavaPlugin() {
-    private val api = BukkitApi(this)
-    private val socketServer = SocketServer(api)
-    private val requestHandler = RequestHandler(api)
+    private lateinit var api: BukkitApi
+    private lateinit var socketServer: SocketServer
+    private lateinit var requestHandler: RequestHandler
 
     override fun onEnable() {
+        api = BukkitApi(this)
+        socketServer = SocketServer(api)
+        requestHandler = RequestHandler(api)
+
         thread {
             socketServer.start(requestHandler)
         }

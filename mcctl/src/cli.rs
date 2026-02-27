@@ -29,6 +29,8 @@ pub enum Subcommand {
         #[command(subcommand)]
         command: Extensions,
     },
+    /// Show server statistics
+    Stats(StatsArgs),
 }
 
 #[derive(clap::Args)]
@@ -130,4 +132,11 @@ pub struct ExtensionsAddArgs {
     /// Currently only Modrinth is supported.
     /// If not specified, you will be prompted to search for mods/plugins.
     pub url: Option<String>,
+}
+
+#[derive(clap::Args)]
+pub struct StatsArgs {
+    /// The directory of the server to show statistics for. If not specified, current directory will be used.
+    #[arg(short = 'd', long)]
+    pub server_dir: Option<PathBuf>,
 }

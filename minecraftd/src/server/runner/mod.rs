@@ -23,6 +23,7 @@ use crate::{
         extension_providers::{extension_cache_root_dir, get_extension_provider},
         implementations::{ServerImplementation, get_server_implementation},
         java_runtime::JavaRuntimeExt,
+        proxy_server,
         runner::{
             auto_start::{
                 add_auto_start_directory, get_auto_start_directories, remove_auto_start_directory,
@@ -131,11 +132,6 @@ pub async fn init_runner() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn get_server_id_by_hostname(hostname: &str) -> Option<Uuid> {
-    let runner = RUNNER.lock().await;
-    runner.running_servers.get_id_by_hostname(hostname)
-}
-
 /// Never returns ServerStatus::Stopped
 pub async fn get_server_status(id: Uuid) -> Option<ServerStatus> {
     let runner = RUNNER.lock().await;
@@ -148,14 +144,6 @@ pub async fn get_server_dir(id: Uuid) -> Option<PathBuf> {
         .running_servers
         .get(&id)
         .map(|s| s.server_dir.clone())
-}
-
-pub async fn get_server_port(id: Uuid) -> Option<u16> {
-    let runner = RUNNER.lock().await;
-    runner
-        .running_servers
-        .get(&id)
-        .map(|s| s.server_port.port())
 }
 
 pub async fn is_server_running(server_dir: &Path) -> anyhow::Result<bool> {
@@ -288,8 +276,7 @@ pub async fn restart_server(server_dir: &Path) -> anyhow::Result<()> {
         server.manifest.id
     };
 
-    do_stop_server(id, true).await?;
-    do_start_server(server_dir, true, false).await
+    do_stop_server(id, true).await
 }
 
 pub async fn shutdown() {
@@ -503,6 +490,10 @@ async fn do_start_server(
     spawn_process_watcher(manifest.id, child);
 
     spawn_readiness_checker(manifest.id, server_port.port());
+
+    if let Connection::Proxy { hostname } = &manifest.connection {
+        proxy_server::register_server(manifest.id, hostname, server_port.port()).await;
+    }
 
     runner.running_servers.insert(RunningServer {
         server_dir,
@@ -808,6 +799,8 @@ fn spawn_process_watcher(id: Uuid, mut process: Child) {
                     .expect("Server should exist");
                 drop(runner);
 
+                proxy_server::unregister_server(id).await;
+
                 if !status.success() {
                     send_alert("server_crash", || Alert {
                         severity: Severity::Error,
@@ -831,11 +824,16 @@ fn spawn_process_watcher(id: Uuid, mut process: Child) {
                     .await;
                 }
 
-                if !status.success()
+                let restarting_after_failure = !status.success()
                     && server.manifest.restart_on_failure
-                    && old_status == ServerStatus::Ready
-                {
-                    info!("Server is configured to restart on failure. Restarting...");
+                    && old_status == ServerStatus::Ready;
+                let restarting = restarting_after_failure
+                    || old_status == ServerStatus::Stopping { restarting: true };
+
+                if restarting {
+                    if restarting_after_failure {
+                        info!("Server is configured to restart on failure. Restarting...");
+                    }
                     if let Err(e) = do_start_server(&server.server_dir, true, false).await {
                         error!(
                             "Failed to restart server at '{}': {:?}",

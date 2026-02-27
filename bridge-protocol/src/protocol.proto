@@ -27,5 +27,11 @@ message GetServerMetricsResponse {
 }
 
 message ServerMetrics {
-    int32 player_count = 1;
+    optional double tps = 1;
+    optional double mspt = 2;
+    optional uint32 player_count = 3;
+    optional uint32 entity_count = 4;
+    optional uint32 loaded_chunk_count = 5;
+    optional uint64 allocated_memory = 6;
+    optional uint64 used_memory = 7;
 }

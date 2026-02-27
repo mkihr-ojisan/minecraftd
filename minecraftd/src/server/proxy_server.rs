@@ -1,4 +1,11 @@
-use std::net::Ipv4Addr;
+use std::{
+    collections::HashMap,
+    net::Ipv4Addr,
+    sync::{
+        Arc, LazyLock,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use anyhow::{Context, bail};
 use minecraft_protocol::{
@@ -13,12 +20,35 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
     signal::unix::{SignalKind, signal},
+    sync::Mutex,
 };
+use uuid::Uuid;
 
 use crate::{
     config::get_config,
     server::runner::{self, ServerStatus},
 };
+
+static PROXY_SERVER: LazyLock<Mutex<ProxyServer>> =
+    LazyLock::new(|| Mutex::new(ProxyServer::default()));
+
+#[derive(Default)]
+struct ProxyServer {
+    hostname_to_server_id: HashMap<String, Uuid>,
+    servers: HashMap<Uuid, Server>,
+}
+
+struct Server {
+    hostname: String,
+    port: u16,
+    stats: Arc<Stats>,
+}
+
+#[derive(Default)]
+struct Stats {
+    received_bytes: AtomicU64,
+    sent_bytes: AtomicU64,
+}
 
 pub async fn start() -> anyhow::Result<()> {
     let bind_address = &get_config().proxy_server.bind_address;
@@ -67,6 +97,28 @@ pub async fn start() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+pub async fn register_server(server_id: Uuid, hostname: &str, port: u16) {
+    let mut proxy_server = PROXY_SERVER.lock().await;
+    proxy_server
+        .hostname_to_server_id
+        .insert(hostname.to_string(), server_id);
+    proxy_server.servers.insert(
+        server_id,
+        Server {
+            hostname: hostname.to_string(),
+            port,
+            stats: Default::default(),
+        },
+    );
+}
+
+pub async fn unregister_server(server_id: Uuid) {
+    let mut proxy_server = PROXY_SERVER.lock().await;
+    if let Some(server) = proxy_server.servers.remove(&server_id) {
+        proxy_server.hostname_to_server_id.remove(&server.hostname);
+    }
 }
 
 async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
@@ -124,7 +176,8 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
         };
     }
 
-    let Some(server_id) = runner::get_server_id_by_hostname(&server_address).await else {
+    let proxy_server = PROXY_SERVER.lock().await;
+    let Some(&server_id) = proxy_server.hostname_to_server_id.get(&server_address) else {
         send_error_message!("Server is not running or does not exist".to_string());
     };
 
@@ -152,11 +205,12 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
 
     info!("Forwarding client {peer_addr} to server with ID {server_id}",);
 
-    let Some(server_port) = runner::get_server_port(server_id).await else {
-        send_error_message!("Server is not running or does not exist".to_string());
-    };
+    let server = proxy_server
+        .servers
+        .get(&server_id)
+        .expect("Server ID was found in hostname_to_server_id but not in servers map");
 
-    let mut server_socket = TcpStream::connect((Ipv4Addr::LOCALHOST, server_port))
+    let mut server_socket = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port))
         .await
         .context("Failed to connect to backend server")?;
     server_socket
@@ -169,31 +223,43 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
         .context("Failed to forward handshake packet to backend server")?;
 
     let mut socket = raw_packet_stream.into_inner();
-    loop {
-        let mut buf1 = [0u8; 1024];
-        let mut buf2 = [0u8; 1024];
 
-        tokio::select! {
-            n = socket.read(&mut buf1) => {
-                let n = n.context("Failed to read from client socket")?;
-                if n == 0 {
-                    break;
+    let stats = server.stats.clone();
+
+    drop(proxy_server);
+
+    let result: anyhow::Result<()> = async {
+        loop {
+            let mut buf1 = [0u8; 1024];
+            let mut buf2 = [0u8; 1024];
+
+            tokio::select! {
+                n = socket.read(&mut buf1) => {
+                    let n = n.context("Failed to read from client socket")?;
+                    if n == 0 {
+                        break;
+                    }
+                    stats.received_bytes.fetch_add(n as u64, Ordering::SeqCst);
+                    server_socket.write_all(&buf1[..n]).await.context("Failed to write to server socket")?;
                 }
-                server_socket.write_all(&buf1[..n]).await.context("Failed to write to server socket")?;
-            }
-            n = server_socket.read(&mut buf2) => {
-                let n = n.context("Failed to read from server socket")?;
-                if n == 0 {
-                    break;
+                n = server_socket.read(&mut buf2) => {
+                    let n = n.context("Failed to read from server socket")?;
+                    if n == 0 {
+                        break;
+                    }
+                    stats.sent_bytes.fetch_add(n as u64, Ordering::SeqCst);
+                    socket.write_all(&buf2[..n]).await.context("Failed to write to client socket")?;
                 }
-                socket.write_all(&buf2[..n]).await.context("Failed to write to client socket")?;
             }
         }
+        Ok(())
+    }.await;
+
+    if result.is_ok() {
+        debug!("Client {peer_addr} disconnected");
     }
 
-    info!("Client {peer_addr} disconnected");
-
-    Ok(())
+    result
 }
 
 async fn fallback_server_list_ping_server<S: AsyncRead + AsyncWrite + Unpin>(
@@ -252,4 +318,25 @@ async fn fallback_server_list_ping_server<S: AsyncRead + AsyncWrite + Unpin>(
     }
 
     Ok(())
+}
+
+pub struct ProxyStats {
+    pub received_bytes: u64,
+    pub sent_bytes: u64,
+}
+pub async fn get_stats() -> HashMap<Uuid, ProxyStats> {
+    let proxy_server = PROXY_SERVER.lock().await;
+    proxy_server
+        .servers
+        .iter()
+        .map(|(server_id, server)| {
+            (
+                *server_id,
+                ProxyStats {
+                    received_bytes: server.stats.received_bytes.load(Ordering::SeqCst),
+                    sent_bytes: server.stats.sent_bytes.load(Ordering::SeqCst),
+                },
+            )
+        })
+        .collect()
 }

@@ -45,6 +45,9 @@ async fn start() -> anyhow::Result<()> {
         Subcommand::Extensions { command } => {
             subcommands::extensions::extensions(command).await?;
         }
+        Subcommand::Stats(args) => {
+            subcommands::stats::stats(args).await?;
+        }
     }
 
     Ok(())

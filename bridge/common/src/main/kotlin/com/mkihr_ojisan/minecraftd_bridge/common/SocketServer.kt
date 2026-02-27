@@ -15,6 +15,8 @@ class SocketServer(private val api: Api): Closeable {
     private val sock = AFUNIXServerSocket.newInstance()
     val socketFile = File("minecraftd.sock")
 
+    private var thread: Thread? = null
+
     fun start(requestHandler: RequestHandler) {
         if (socketFile.exists()) {
             socketFile.delete()
@@ -22,51 +24,53 @@ class SocketServer(private val api: Api): Closeable {
 
         sock.bind(AFUNIXSocketAddress.of(socketFile))
 
-        api.log_info("Socket server started at ${socketFile.absolutePath}")
+        api.logInfo("Socket server started at ${socketFile.absolutePath}")
 
-        while (true) {
-            val client = sock.accept()
-            thread {
-                try {
-                    val input = DataInputStream(client.inputStream)
-                    val output = DataOutputStream(client.outputStream)
+        this.thread = thread {
+            while (true) {
+                val client = sock.accept()
+                thread {
+                    try {
+                        val input = DataInputStream(client.inputStream)
+                        val output = DataOutputStream(client.outputStream)
 
-                    while (true) {
-                        val requestLength = input.readInt().toUInt()
-                        val requestBytes = ByteArray(requestLength.toInt())
-                        input.readFully(requestBytes)
-                        val request = Request.parseFrom(requestBytes)
+                        while (true) {
+                            val requestLength = input.readInt().toUInt()
+                            val requestBytes = ByteArray(requestLength.toInt())
+                            input.readFully(requestBytes)
+                            val request = Request.parseFrom(requestBytes)
 
-                        val response = when (request.payloadCase) {
-                            Request.PayloadCase.PAYLOAD_NOT_SET -> {
-                                throw IllegalArgumentException("Invalid request: payload not set")
-                            }
+                            val response = when (request.payloadCase) {
+                                Request.PayloadCase.PAYLOAD_NOT_SET -> {
+                                    throw IllegalArgumentException("Invalid request: payload not set")
+                                }
 
-                            Request.PayloadCase.GET_SERVER_METRICS_REQUEST -> {
-                                response {
-                                    getServerMetricsResponse = getServerMetricsResponse {
-                                        serverMetrics = requestHandler.getServerMetrics()
+                                Request.PayloadCase.GET_SERVER_METRICS_REQUEST -> {
+                                    response {
+                                        getServerMetricsResponse = getServerMetricsResponse {
+                                            serverMetrics = requestHandler.getServerMetrics()
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        val responseBytes = response.toByteArray()
-                        output.writeInt(responseBytes.size)
-                        output.write(responseBytes)
-                        output.flush()
+                            val responseBytes = response.toByteArray()
+                            output.writeInt(responseBytes.size)
+                            output.write(responseBytes)
+                            output.flush()
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    } finally {
+                        client.close()
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                } finally {
-                    client.close()
                 }
             }
         }
     }
 
     override fun close() {
-        sock.close()
+        thread?.interrupt()
         socketFile.delete()
     }
 }
