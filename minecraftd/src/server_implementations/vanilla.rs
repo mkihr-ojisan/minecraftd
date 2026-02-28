@@ -5,7 +5,7 @@ use mojang_piston_api::minecraft::version_manifest::VersionType;
 use sha1::{Digest, Sha1};
 
 use crate::{
-    server::implementations::{Build, ServerImplementation, Version},
+    server_implementations::{Build, ServerImplementation, Version},
     util::{BoxedFuture, lazy_init_http_client::LazyInitHttpClient},
 };
 

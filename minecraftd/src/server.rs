@@ -3,47 +3,15 @@ use std::path::Path;
 use anyhow::{Context, bail};
 use minecraftd_manifest::{Connection, ExtensionEntry, ExtensionType, ServerManifest};
 
-use crate::server::{
-    extension_providers::{
-        EXTENSION_PROVIDERS, ExtensionInfo, ExtensionProvider, get_extension_provider,
+use crate::{
+    extension::{
+        self,
+        providers::{ExtensionInfo, ExtensionProvider, get_extension_provider},
     },
-    implementations::{Build, Version, get_server_implementation},
     java_runtime::JavaRuntimeExt,
+    runner,
+    server_implementations::get_server_implementation,
 };
-
-pub mod auto_update;
-mod extension_providers;
-mod implementations;
-mod java_runtime;
-pub mod proxy_server;
-pub mod runner;
-mod server_list_ping;
-mod server_properties;
-
-pub fn get_server_implementations() -> impl Iterator<Item = &'static str> {
-    implementations::SERVER_IMPLEMENTATIONS
-        .iter()
-        .map(|impl_| impl_.name())
-}
-
-pub async fn get_server_versions(server_implementation: &str) -> anyhow::Result<Vec<Version>> {
-    let Some(implementation) = get_server_implementation(server_implementation) else {
-        bail!("Unknown server implementation '{}'", server_implementation);
-    };
-
-    implementation.get_versions().await
-}
-
-pub async fn get_server_builds(
-    server_implementation: &str,
-    version: &str,
-) -> anyhow::Result<Vec<Build>> {
-    let Some(implementation) = get_server_implementation(server_implementation) else {
-        bail!("Unknown server implementation '{}'", server_implementation);
-    };
-
-    implementation.get_builds(version).await
-}
 
 pub async fn create_server(
     name: &str,
@@ -159,55 +127,6 @@ pub async fn update_server(
     })
 }
 
-pub fn get_extension_providers() -> impl Iterator<Item = &'static str> {
-    extension_providers::EXTENSION_PROVIDERS
-        .iter()
-        .map(|p| p.name())
-}
-
-pub async fn search_extensions(
-    provider: &str,
-    type_: ExtensionType,
-    server_version: &str,
-    query: &str,
-    include_incompatible_versions: bool,
-) -> anyhow::Result<Vec<extension_providers::ExtensionInfo>> {
-    let Some(provider) = extension_providers::EXTENSION_PROVIDERS
-        .iter()
-        .find(|p| p.name() == provider)
-    else {
-        bail!("Unknown extension provider '{}'", provider);
-    };
-
-    provider
-        .search_extension(type_, server_version, query, include_incompatible_versions)
-        .await
-}
-
-pub async fn get_extension_versions(
-    provider: &str,
-    type_: ExtensionType,
-    server_version: &str,
-    extension_id: &str,
-    include_incompatible_versions: bool,
-) -> anyhow::Result<Vec<extension_providers::ExtensionVersionInfo>> {
-    let Some(provider) = extension_providers::EXTENSION_PROVIDERS
-        .iter()
-        .find(|p| p.name() == provider)
-    else {
-        bail!("Unknown extension provider '{}'", provider);
-    };
-
-    provider
-        .get_extension_versions(
-            type_,
-            server_version,
-            extension_id,
-            include_incompatible_versions,
-        )
-        .await
-}
-
 pub struct AddExtensionResult {
     pub added_extensions: Vec<ExtensionInfo>,
 }
@@ -283,8 +202,7 @@ pub async fn add_extension(
                 .context("No versions found for extension")?
         };
 
-        provider
-            .get_extension_jar_path(type_, extension_id, &version_info.id)
+        extension::cache::get_or_download(provider, type_, extension_id, &version_info.id)
             .await
             .context("Failed to prepare extension jar")?;
 
@@ -340,14 +258,4 @@ pub async fn add_extension(
         .context("Failed to save updated server manifest")?;
 
     Ok(AddExtensionResult { added_extensions })
-}
-
-pub async fn get_extension_info_by_url(url: &str) -> anyhow::Result<(&'static str, ExtensionInfo)> {
-    for provider in EXTENSION_PROVIDERS {
-        if let Ok(info) = provider.get_extension_info_by_url(url).await {
-            return Ok((provider.name(), info));
-        }
-    }
-
-    bail!("Could not find extension for URL: {url}");
 }

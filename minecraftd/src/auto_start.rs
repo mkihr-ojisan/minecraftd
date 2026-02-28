@@ -11,7 +11,7 @@ static AUTO_START_CONFIG: Mutex<Option<AutoStartConfig>> = Mutex::const_new(None
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct AutoStartConfig {
-    directories: HashSet<PathBuf>,
+    server_dirs: HashSet<PathBuf>,
 }
 
 fn config_path() -> anyhow::Result<PathBuf> {
@@ -56,25 +56,25 @@ async fn get_auto_start_config() -> MappedMutexGuard<'static, AutoStartConfig> {
     MutexGuard::map(config_lock, |opt| opt.as_mut().unwrap())
 }
 
-pub async fn add_auto_start_directory(server_dir: &Path) -> anyhow::Result<()> {
+pub async fn add_auto_start_server(server_dir: &Path) -> anyhow::Result<()> {
     let mut config = get_auto_start_config().await;
-    if config.directories.insert(server_dir.to_path_buf()) {
+    if config.server_dirs.insert(server_dir.to_path_buf()) {
         drop(config);
         save().await?;
     }
     Ok(())
 }
 
-pub async fn remove_auto_start_directory(server_dir: &Path) -> anyhow::Result<()> {
+pub async fn remove_auto_start_server(server_dir: &Path) -> anyhow::Result<()> {
     let mut config = get_auto_start_config().await;
-    if config.directories.remove(server_dir) {
+    if config.server_dirs.remove(server_dir) {
         drop(config);
         save().await?;
     }
     Ok(())
 }
 
-pub async fn get_auto_start_directories() -> HashSet<PathBuf> {
+pub async fn get_auto_start_servers() -> HashSet<PathBuf> {
     let config = get_auto_start_config().await;
-    config.directories.clone()
+    config.server_dirs.clone()
 }

@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::path::{Path, PathBuf};
 
 use anyhow::bail;
 use bridge_protocol::{
@@ -11,14 +8,7 @@ use prost::Message;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
-    sync::Mutex,
 };
-use uuid::Uuid;
-
-use crate::server::runner::{RUNNER, ServerStatus, get_server_status};
-
-const BRIDGE_CONNECT_RETRY_INTERVAL_SECS: u64 = 5;
-const BRIDGE_CONNECT_MAX_RETRIES: u32 = 10;
 
 #[derive(Debug)]
 pub struct Bridge {
@@ -67,38 +57,4 @@ impl Bridge {
             _ => bail!("Unexpected response payload"),
         }
     }
-}
-
-pub fn spawn_bridge_connector(id: Uuid, server_dir: PathBuf) {
-    tokio::spawn(async move {
-        for attempt in 1..=BRIDGE_CONNECT_MAX_RETRIES {
-            if get_server_status(id).await != Some(ServerStatus::Ready) {
-                debug!("Server is no longer ready, stopping bridge connector");
-                break;
-            }
-
-            match Bridge::connect(&server_dir).await {
-                Ok(bridge) => {
-                    info!("Successfully connected to bridge");
-
-                    let runner = RUNNER.lock().await;
-                    let Some(server) = runner.running_servers.get(&id) else {
-                        return;
-                    };
-                    server
-                        .bridge
-                        .set(Mutex::new(bridge))
-                        .expect("bridge already set");
-
-                    return;
-                }
-                Err(e) => {
-                    debug!("Failed to connect to bridge on attempt {attempt}: {e:?}");
-                    tokio::time::sleep(Duration::from_secs(BRIDGE_CONNECT_RETRY_INTERVAL_SECS))
-                        .await;
-                }
-            }
-        }
-        warn!("Failed to connect to bridge");
-    });
 }

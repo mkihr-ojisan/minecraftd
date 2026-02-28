@@ -5,6 +5,7 @@ use std::{
         Arc, LazyLock,
         atomic::{AtomicU64, Ordering},
     },
+    time::Instant,
 };
 
 use anyhow::{Context, bail};
@@ -26,7 +27,9 @@ use uuid::Uuid;
 
 use crate::{
     config::get_config,
-    server::runner::{self, ServerStatus},
+    metrics::{self, MetricsCollector, MetricsCollectorContext},
+    runner::{self, ServerStatus},
+    util::BoxedFuture,
 };
 
 static PROXY_SERVER: LazyLock<Mutex<ProxyServer>> =
@@ -50,51 +53,9 @@ struct Stats {
     sent_bytes: AtomicU64,
 }
 
-pub async fn start() -> anyhow::Result<()> {
-    let bind_address = &get_config().proxy_server.bind_address;
-
-    let listener = tokio::net::TcpListener::bind(bind_address)
-        .await
-        .with_context(|| format!("Failed to bind proxy server to address {}", bind_address))?;
-
-    info!(
-        "Proxy server listening on {}",
-        listener
-            .local_addr()
-            .context("Failed to get local address")?
-    );
-
-    let mut sigint = signal(SignalKind::interrupt()).context("Failed to set up SIGINT handler")?;
-    let mut sigterm =
-        signal(SignalKind::terminate()).context("Failed to set up SIGTERM handler")?;
-
-    loop {
-        let (socket, addr) = tokio::select! {
-            _ = sigint.recv() => {
-                info!("Received SIGINT, shutting down proxy server");
-                break;
-            }
-            _ = sigterm.recv() => {
-                info!("Received SIGTERM, shutting down proxy server");
-                break;
-            }
-            result = listener.accept() => match result {
-                Ok(conn) => conn,
-                Err(e) => {
-                    error!("Failed to accept incoming connection: {:?}", e);
-                    continue;
-                }
-            },
-        };
-
-        info!("Accepted connection from {}", addr);
-
-        tokio::spawn(async move {
-            if let Err(e) = handle_client(socket).await {
-                error!("Error handling client {}: {:?}", addr, e);
-            }
-        });
-    }
+pub async fn init() -> anyhow::Result<()> {
+    metrics::register_metrics_collector(ProxyMetricsCollector::default()).await;
+    start_server().await?;
 
     Ok(())
 }
@@ -119,6 +80,57 @@ pub async fn unregister_server(server_id: Uuid) {
     if let Some(server) = proxy_server.servers.remove(&server_id) {
         proxy_server.hostname_to_server_id.remove(&server.hostname);
     }
+}
+
+async fn start_server() -> anyhow::Result<()> {
+    let bind_address = &get_config().proxy_server.bind_address;
+
+    let listener = tokio::net::TcpListener::bind(bind_address)
+        .await
+        .with_context(|| format!("Failed to bind proxy server to address {}", bind_address))?;
+
+    info!(
+        "Proxy server listening on {}",
+        listener
+            .local_addr()
+            .context("Failed to get local address")?
+    );
+
+    let mut sigint = signal(SignalKind::interrupt()).context("Failed to set up SIGINT handler")?;
+    let mut sigterm =
+        signal(SignalKind::terminate()).context("Failed to set up SIGTERM handler")?;
+
+    tokio::spawn(async move {
+        loop {
+            let (socket, addr) = tokio::select! {
+                _ = sigint.recv() => {
+                    info!("Received SIGINT, shutting down proxy server");
+                    break;
+                }
+                _ = sigterm.recv() => {
+                    info!("Received SIGTERM, shutting down proxy server");
+                    break;
+                }
+                result = listener.accept() => match result {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        error!("Failed to accept incoming connection: {:?}", e);
+                        continue;
+                    }
+                },
+            };
+
+            info!("Accepted connection from {}", addr);
+
+            tokio::spawn(async move {
+                if let Err(e) = handle_client(socket).await {
+                    error!("Error handling client {}: {:?}", addr, e);
+                }
+            });
+        }
+    });
+
+    Ok(())
 }
 
 async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
@@ -323,7 +335,8 @@ pub struct ProxyStats {
     pub received_bytes: u64,
     pub sent_bytes: u64,
 }
-pub async fn get_stats() -> HashMap<Uuid, ProxyStats> {
+
+async fn get_stats() -> HashMap<Uuid, ProxyStats> {
     let proxy_server = PROXY_SERVER.lock().await;
     proxy_server
         .servers
@@ -338,4 +351,70 @@ pub async fn get_stats() -> HashMap<Uuid, ProxyStats> {
             )
         })
         .collect()
+}
+
+#[derive(Default)]
+struct ProxyMetricsCollector {
+    last_timestamp: Option<Instant>,
+    last_stats: HashMap<Uuid, ProxyStats>,
+}
+
+impl MetricsCollector for ProxyMetricsCollector {
+    fn name(&self) -> &'static str {
+        "proxy_metrics_collector"
+    }
+
+    fn collect<'a>(
+        &'a mut self,
+        ctx: &'a mut MetricsCollectorContext,
+    ) -> BoxedFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            let current_values = get_stats().await;
+            let now = Instant::now();
+
+            let Some(last_timestamp) = self.last_timestamp else {
+                self.last_timestamp = Some(now);
+                self.last_stats = current_values;
+                return Ok(());
+            };
+
+            let elapsed_seconds = now.duration_since(last_timestamp).as_secs_f64();
+            if elapsed_seconds <= 0.0 {
+                self.last_timestamp = Some(now);
+                self.last_stats = current_values;
+                return Ok(());
+            }
+
+            let timestamp = std::time::SystemTime::now();
+
+            for (server_id, stats) in &current_values {
+                let Some(last_stats) = self.last_stats.get(server_id) else {
+                    continue;
+                };
+
+                let delta_received = stats.received_bytes.wrapping_sub(last_stats.received_bytes);
+                let delta_sent = stats.sent_bytes.wrapping_sub(last_stats.sent_bytes);
+
+                let received_rate = delta_received as f64 / elapsed_seconds;
+                let sent_rate = delta_sent as f64 / elapsed_seconds;
+
+                ctx.push_metric(
+                    *server_id,
+                    "proxy_received_bytes_per_second",
+                    timestamp,
+                    received_rate,
+                );
+                ctx.push_metric(
+                    *server_id,
+                    "proxy_sent_bytes_per_second",
+                    timestamp,
+                    sent_rate,
+                );
+            }
+
+            self.last_timestamp = Some(now);
+            self.last_stats = current_values;
+            Ok(())
+        })
+    }
 }

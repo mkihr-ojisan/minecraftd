@@ -3,15 +3,16 @@ use std::time::Duration;
 use minecraft_protocol::text_component::{Color, Object, TextComponent};
 use tokio::task::JoinSet;
 
-use crate::server::{
-    extension_providers::get_extension_provider, implementations::get_server_implementation, runner,
+use crate::{
+    extension::providers::get_extension_provider, runner,
+    server_implementations::get_server_implementation,
 };
 
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_hours(24);
 const WAIT_UNTIL_ALL_PLAYERS_LOG_OUT_TIMEOUT: Duration = Duration::from_hours(1);
 const NOTIFY_PLAYERS_BEFORE_RESTART_INTERVAL_MINUTES: u64 = 1;
 
-pub fn start() {
+pub fn init() {
     tokio::spawn(async {
         let mut interval = tokio::time::interval(UPDATE_CHECK_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -19,14 +20,14 @@ pub fn start() {
         loop {
             interval.tick().await;
 
-            if let Err(err) = do_update().await {
+            if let Err(err) = do_auto_update().await {
                 error!("Auto-update error: {err:?}");
             }
         }
     });
 }
 
-async fn do_update() -> anyhow::Result<()> {
+async fn do_auto_update() -> anyhow::Result<()> {
     let servers = runner::get_running_server_ids().await;
 
     let mut join_set = JoinSet::new();

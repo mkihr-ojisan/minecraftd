@@ -4,7 +4,7 @@ use bytes::Bytes;
 use minecraftd_manifest::JavaRuntime;
 
 use crate::{
-    server::implementations::{Build, ServerImplementation, Version},
+    server_implementations::{Build, ServerImplementation, Version},
     util::BoxedFuture,
 };
 

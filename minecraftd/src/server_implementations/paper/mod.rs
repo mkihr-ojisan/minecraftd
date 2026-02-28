@@ -5,7 +5,7 @@ use sha1::Digest;
 use sha2::Sha256;
 
 use crate::{
-    server::implementations::{Build, ServerImplementation, Version},
+    server_implementations::{Build, ServerImplementation, Version},
     util::{BoxedFuture, lazy_init_http_client::LazyInitHttpClient},
 };
 

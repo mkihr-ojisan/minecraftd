@@ -13,38 +13,30 @@ use minecraftd_manifest::{Connection, ExtensionType, ServerManifest};
 use pty_process::Pty;
 use rand::distr::{Alphanumeric, SampleString};
 use tokio::{process::Child, sync::Mutex, task::JoinSet, time::timeout};
-use tsink::{Aggregation, DataPoint, DownsampleOptions, Label, QueryOptions};
 use uuid::Uuid;
 
 use crate::{
     alert::{Alert, Severity, send_alert},
-    port::Port,
-    server::{
-        extension_providers::{extension_cache_root_dir, get_extension_provider},
-        implementations::{ServerImplementation, get_server_implementation},
-        java_runtime::JavaRuntimeExt,
-        proxy_server,
-        runner::{
-            auto_start::{
-                add_auto_start_directory, get_auto_start_directories, remove_auto_start_directory,
-            },
-            bridge::{Bridge, spawn_bridge_connector},
-            metrics::{init_metrics, shutdown_metrics},
-            running_servers::RunningServers,
-            terminal::{
-                TerminalInput, TerminalOutput, spawn_terminal_reader, spawn_terminal_writer,
-            },
-        },
-        server_list_ping::server_list_ping,
-        server_properties::ServerProperties,
+    auto_start::{add_auto_start_server, get_auto_start_servers, remove_auto_start_server},
+    bridge::Bridge,
+    extension::{self, cache::get_extension_symlink_info, providers::get_extension_provider},
+    java_runtime::JavaRuntimeExt,
+    port_pool::Port,
+    proxy_server,
+    runner::{
+        metrics::init_metrics,
+        running_servers::RunningServers,
+        terminal::{TerminalInput, TerminalOutput, spawn_terminal_reader, spawn_terminal_writer},
     },
-    util::{observable_value::ObservableValue, os_str_ext::OsStrExt},
+    server_implementations::{ServerImplementation, get_server_implementation},
+    util::{
+        observable_value::ObservableValue, os_str_ext::OsStrExt,
+        server_list_ping::server_list_ping, server_properties::ServerProperties,
+    },
 };
 
 pub use terminal::{TerminalReader, TerminalWriter};
 
-mod auto_start;
-mod bridge;
 mod metrics;
 mod running_servers;
 mod terminal;
@@ -56,6 +48,8 @@ const PTY_DEFAULT_COLS: u16 = 80;
 const REQUEST_STOP_RETRY_LIMIT: usize = 5;
 const REQUEST_STOP_RETRY_INTERVAL_SECS: u64 = 10;
 const WAIT_FOR_PLAYER_LOGOUT_INTERVAL_SECS: u64 = 60;
+const BRIDGE_CONNECT_RETRY_INTERVAL_SECS: u64 = 5;
+const BRIDGE_CONNECT_MAX_RETRIES: u32 = 10;
 
 static RUNNER: LazyLock<Mutex<Runner>> = LazyLock::new(|| Mutex::new(Runner::new()));
 
@@ -126,7 +120,7 @@ impl Runner {
     }
 }
 
-pub async fn init_runner() -> anyhow::Result<()> {
+pub async fn init() -> anyhow::Result<()> {
     init_metrics().await?;
     start_auto_start_servers().await;
     Ok(())
@@ -218,7 +212,7 @@ pub async fn stop_server(server_dir: &Path) -> anyhow::Result<()> {
                 "Removing server at '{}' from auto-start list",
                 server_dir.display()
             );
-            remove_auto_start_directory(&server.server_dir).await?;
+            remove_auto_start_server(&server.server_dir).await?;
         }
     }
 
@@ -280,8 +274,6 @@ pub async fn restart_server(server_dir: &Path) -> anyhow::Result<()> {
 }
 
 pub async fn shutdown() {
-    shutdown_metrics().await;
-
     let mut join_set = JoinSet::new();
     {
         let runner = RUNNER.lock().await;
@@ -361,39 +353,6 @@ pub async fn tellraw(id: Uuid, target: &str, message: TextComponent) -> anyhow::
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn query_metrics(
-    server_dir: &Path,
-    metric: impl Into<String>,
-    start_timestamp: i64,
-    end_timestamp: i64,
-    aggregation: Aggregation,
-    downsample_interval: Option<i64>,
-    limit: Option<u32>,
-    offset: Option<u32>,
-) -> anyhow::Result<Vec<DataPoint>> {
-    let runner = RUNNER.lock().await;
-    let Some(server) = runner.running_servers.get_by_server_dir(server_dir)? else {
-        bail!("Server at '{}' is not running", server_dir.display());
-    };
-
-    let opts = QueryOptions {
-        labels: vec![Label::new("server_id", server.manifest.id.to_string())],
-        start: start_timestamp,
-        end: end_timestamp,
-        aggregation,
-        downsample: downsample_interval.map(|interval| DownsampleOptions { interval }),
-        limit: limit.map(|l| l as usize),
-        offset: offset.map(|o| o as usize).unwrap_or(0),
-    };
-
-    drop(runner);
-
-    let data_points = metrics::query_metrics(metric, opts).await?;
-
-    Ok(data_points)
-}
-
 async fn do_start_server(
     server_dir: &Path,
     restarting: bool,
@@ -442,13 +401,13 @@ async fn do_start_server(
     }
 
     if manifest.auto_start {
-        add_auto_start_directory(&server_dir).await?;
+        add_auto_start_server(&server_dir).await?;
         info!(
             "Auto-start is enabled for server at '{}'",
             server_dir.display()
         );
     } else {
-        remove_auto_start_directory(&server_dir).await?;
+        remove_auto_start_server(&server_dir).await?;
         info!(
             "Auto-start is disabled for server at '{}'",
             server_dir.display()
@@ -606,8 +565,6 @@ async fn prepare_server_properties(
 }
 
 async fn prepare_extensions(server_dir: &Path, manifest: &ServerManifest) -> anyhow::Result<()> {
-    let extension_cache_dir = extension_cache_root_dir()?;
-
     let mods_dir = server_dir.join("mods");
     let plugins_dir = server_dir.join("plugins");
 
@@ -630,39 +587,28 @@ async fn prepare_extensions(server_dir: &Path, manifest: &ServerManifest) -> any
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if path.is_symlink() {
-                let target = tokio::fs::read_link(&path).await?;
-                if let Ok(relative_target) = target.strip_prefix(&extension_cache_dir) {
-                    let components = relative_target.components().collect::<Vec<_>>();
-                    if components.len() == 5 {
-                        let provider = components[0].as_os_str().to_os_string();
+                let Some(symlink_info) = get_extension_symlink_info(&path).await? else {
+                    continue;
+                };
 
-                        let ty = match components[1].as_os_str().to_str() {
-                            Some("mods") => ExtensionType::Mod,
-                            Some("plugins") => ExtensionType::Plugin,
-                            _ => continue,
-                        };
-
-                        if ty != type_ {
-                            warn!(
-                                "Symlink at '{}' points to a {:?} but is in the {:?} directory. Removing it.",
-                                path.display(),
-                                ty,
-                                type_
-                            );
-                            tokio::fs::remove_file(&path).await?;
-                            continue;
-                        }
-
-                        let id = components[2].as_os_str().to_os_string();
-                        let version_id = components[3].as_os_str().to_os_string();
-
-                        if components[4].as_os_str() != "extension.jar" {
-                            continue;
-                        }
-
-                        managed_mods_in_mods_dir.push((path, ty, provider, id, version_id));
-                    }
+                if symlink_info.ty != type_ {
+                    warn!(
+                        "Symlink at '{}' points to a {:?} but is in the {:?} directory. Removing it.",
+                        path.display(),
+                        symlink_info.ty,
+                        type_
+                    );
+                    tokio::fs::remove_file(&path).await?;
+                    continue;
                 }
+
+                managed_mods_in_mods_dir.push((
+                    path,
+                    symlink_info.ty,
+                    symlink_info.provider,
+                    symlink_info.id,
+                    symlink_info.version_id,
+                ));
             }
         }
     }
@@ -700,10 +646,14 @@ async fn prepare_extensions(server_dir: &Path, manifest: &ServerManifest) -> any
         let provider = get_extension_provider(&extension.provider)
             .with_context(|| format!("Unknown extension provider '{}'", extension.provider))?;
 
-        let target_path = provider
-            .get_extension_jar_path(extension.type_, &extension.id, &extension.version_id)
-            .await
-            .context("Failed to prepare extension jar")?;
+        let target_path = extension::cache::get_or_download(
+            provider,
+            extension.type_,
+            &extension.id,
+            &extension.version_id,
+        )
+        .await
+        .context("Failed to prepare extension jar")?;
 
         let mut symlink_path = server_dir.to_path_buf();
         match extension.type_ {
@@ -897,6 +847,40 @@ fn spawn_readiness_checker(id: Uuid, server_port: u16) {
     });
 }
 
+fn spawn_bridge_connector(id: Uuid, server_dir: PathBuf) {
+    tokio::spawn(async move {
+        for attempt in 1..=BRIDGE_CONNECT_MAX_RETRIES {
+            if get_server_status(id).await != Some(ServerStatus::Ready) {
+                debug!("Server is no longer ready, stopping bridge connector");
+                break;
+            }
+
+            match Bridge::connect(&server_dir).await {
+                Ok(bridge) => {
+                    info!("Successfully connected to bridge");
+
+                    let runner = RUNNER.lock().await;
+                    let Some(server) = runner.running_servers.get(&id) else {
+                        return;
+                    };
+                    server
+                        .bridge
+                        .set(Mutex::new(bridge))
+                        .expect("bridge already set");
+
+                    return;
+                }
+                Err(e) => {
+                    debug!("Failed to connect to bridge on attempt {attempt}: {e:?}");
+                    tokio::time::sleep(Duration::from_secs(BRIDGE_CONNECT_RETRY_INTERVAL_SECS))
+                        .await;
+                }
+            }
+        }
+        warn!("Failed to connect to bridge");
+    });
+}
+
 async fn do_stop_server(id: Uuid, restarting: bool) -> anyhow::Result<()> {
     {
         let runner = RUNNER.lock().await;
@@ -1021,7 +1005,7 @@ async fn do_kill_server(id: Uuid) -> anyhow::Result<()> {
 }
 
 async fn start_auto_start_servers() {
-    let auto_start_servers = get_auto_start_directories().await;
+    let auto_start_servers = get_auto_start_servers().await;
 
     info!("Auto-starting servers: {:?}", auto_start_servers);
 
@@ -1033,7 +1017,7 @@ async fn start_auto_start_servers() {
                     server_dir.display(),
                     e
                 );
-                if let Err(e) = remove_auto_start_directory(&server_dir).await {
+                if let Err(e) = remove_auto_start_server(&server_dir).await {
                     error!("{e:?}",);
                 }
             }

@@ -21,7 +21,7 @@ pub struct Port {
     port: u16,
 }
 
-pub fn init_port_pool() {
+pub fn init() {
     let config = get_config();
 
     let pool = PortPool {

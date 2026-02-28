@@ -9,7 +9,7 @@ use modrinth_api::{
 use reqwest::Url;
 
 use crate::{
-    server::extension_providers::{
+    extension::providers::{
         ExtensionDependency, ExtensionInfo, ExtensionProvider, ExtensionVersionInfo,
     },
     util::BoxedFuture,

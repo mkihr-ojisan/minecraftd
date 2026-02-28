@@ -2,11 +2,14 @@ use std::path::Path;
 
 use anyhow::{Context, bail};
 use mcctl_protocol::*;
-use minecraftd_manifest::Connection;
+use minecraftd_manifest::{Connection, ServerManifest};
 
-use crate::server::{
-    self,
-    runner::{TerminalReader, TerminalWriter},
+use crate::{
+    extension::providers::{EXTENSION_PROVIDERS, get_extension_provider},
+    metrics::{self, MetricsQuery},
+    runner::{self, TerminalReader, TerminalWriter},
+    server,
+    server_implementations::{SERVER_IMPLEMENTATIONS, get_server_implementation},
 };
 
 struct RequestHandler;
@@ -15,18 +18,20 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
     for RequestHandler
 {
     async fn get_server_implementations() -> anyhow::Result<Vec<String>> {
-        Ok(server::get_server_implementations()
-            .map(String::from)
+        Ok(SERVER_IMPLEMENTATIONS
+            .iter()
+            .map(|impl_| impl_.name().to_string())
             .collect())
     }
 
     async fn get_versions(
         server_implementation: &str,
     ) -> anyhow::Result<Vec<mcctl_protocol::Version>> {
-        Ok(server::get_server_versions(server_implementation)
-            .await
+        Ok(get_server_implementation(server_implementation)
+            .with_context(|| format!("Unknown server implementation '{}'", server_implementation))?
+            .get_versions()
+            .await?
             .into_iter()
-            .flatten()
             .map(|v| mcctl_protocol::Version {
                 name: v.name,
                 is_stable: v.is_stable,
@@ -38,10 +43,11 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
         server_implementation: &str,
         version: &str,
     ) -> anyhow::Result<Vec<mcctl_protocol::Build>> {
-        Ok(server::get_server_builds(server_implementation, version)
-            .await
+        Ok(get_server_implementation(server_implementation)
+            .with_context(|| format!("Unknown server implementation '{}'", server_implementation))?
+            .get_builds(version)
+            .await?
             .into_iter()
-            .flatten()
             .map(|b| mcctl_protocol::Build {
                 name: b.name,
                 is_stable: b.is_stable,
@@ -92,7 +98,7 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
             bail!("server_dir must be absolute");
         }
 
-        server::runner::start_server(server_dir).await?;
+        runner::start_server(server_dir).await?;
 
         Ok(())
     }
@@ -102,7 +108,7 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
             bail!("server_dir must be absolute");
         }
 
-        server::runner::stop_server(server_dir).await?;
+        runner::stop_server(server_dir).await?;
 
         Ok(())
     }
@@ -112,7 +118,7 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
             bail!("server_dir must be absolute");
         }
 
-        server::runner::kill_server(server_dir).await?;
+        runner::kill_server(server_dir).await?;
 
         Ok(())
     }
@@ -124,11 +130,11 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
             bail!("server_dir must be absolute");
         }
 
-        server::runner::attach_terminal(server_dir).await
+        runner::attach_terminal(server_dir).await
     }
 
     async fn get_running_servers() -> anyhow::Result<Vec<RunningServer>> {
-        let servers = server::runner::get_running_servers().await;
+        let servers = runner::get_running_servers().await;
 
         Ok(servers
             .into_iter()
@@ -136,18 +142,14 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
                 server_dir: s.server_dir.to_string_lossy().to_string(),
                 name: s.name,
                 status: match s.status {
-                    server::runner::ServerStatus::Starting { restarting: false } => {
-                        ServerStatus::Starting
-                    }
-                    server::runner::ServerStatus::Ready => ServerStatus::Ready,
-                    server::runner::ServerStatus::Stopping { restarting: false } => {
-                        ServerStatus::Stopping
-                    }
-                    server::runner::ServerStatus::Starting { restarting: true }
-                    | server::runner::ServerStatus::Stopping { restarting: true } => {
+                    runner::ServerStatus::Starting { restarting: false } => ServerStatus::Starting,
+                    runner::ServerStatus::Ready => ServerStatus::Ready,
+                    runner::ServerStatus::Stopping { restarting: false } => ServerStatus::Stopping,
+                    runner::ServerStatus::Starting { restarting: true }
+                    | runner::ServerStatus::Stopping { restarting: true } => {
                         ServerStatus::Restarting
                     }
-                    server::runner::ServerStatus::Stopped => unreachable!(),
+                    runner::ServerStatus::Stopped => unreachable!(),
                 } as i32,
                 uptime_seconds: s.uptime.as_secs(),
                 port: s.server_port as u32,
@@ -163,7 +165,7 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
             bail!("server_dir must be absolute");
         }
 
-        server::runner::wait_ready(server_dir).await?;
+        runner::wait_ready(server_dir).await?;
 
         Ok(())
     }
@@ -174,7 +176,7 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
             bail!("server_dir must be absolute");
         }
 
-        server::runner::restart_server(server_dir).await?;
+        runner::restart_server(server_dir).await?;
 
         Ok(())
     }
@@ -219,8 +221,9 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
     }
 
     async fn get_extension_providers() -> anyhow::Result<Vec<String>> {
-        Ok(server::get_extension_providers()
-            .map(String::from)
+        Ok(EXTENSION_PROVIDERS
+            .iter()
+            .map(|provider| provider.name().to_string())
             .collect())
     }
 
@@ -231,23 +234,24 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
         query: &str,
         include_incompatible_versions: bool,
     ) -> anyhow::Result<Vec<ExtensionInfo>> {
-        Ok(server::search_extensions(
-            provider,
-            match type_ {
-                ExtensionType::Mod => minecraftd_manifest::ExtensionType::Mod,
-                ExtensionType::Plugin => minecraftd_manifest::ExtensionType::Plugin,
-            },
-            server_version,
-            query,
-            include_incompatible_versions,
-        )
-        .await?
-        .into_iter()
-        .map(|m| ExtensionInfo {
-            id: m.id,
-            name: m.name,
-        })
-        .collect())
+        Ok(get_extension_provider(provider)
+            .with_context(|| format!("Unknown extension provider '{}'", provider))?
+            .search_extension(
+                match type_ {
+                    ExtensionType::Mod => minecraftd_manifest::ExtensionType::Mod,
+                    ExtensionType::Plugin => minecraftd_manifest::ExtensionType::Plugin,
+                },
+                server_version,
+                query,
+                include_incompatible_versions,
+            )
+            .await?
+            .into_iter()
+            .map(|e| ExtensionInfo {
+                id: e.id,
+                name: e.name,
+            })
+            .collect())
     }
 
     async fn get_extension_versions(
@@ -257,24 +261,25 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
         extension_id: &str,
         include_incompatible_versions: bool,
     ) -> anyhow::Result<Vec<ExtensionVersionInfo>> {
-        Ok(server::get_extension_versions(
-            provider,
-            match type_ {
-                ExtensionType::Mod => minecraftd_manifest::ExtensionType::Mod,
-                ExtensionType::Plugin => minecraftd_manifest::ExtensionType::Plugin,
-            },
-            server_version,
-            extension_id,
-            include_incompatible_versions,
-        )
-        .await?
-        .into_iter()
-        .map(|v| ExtensionVersionInfo {
-            id: v.id,
-            version: v.version,
-            is_stable: v.is_stable,
-        })
-        .collect())
+        Ok(get_extension_provider(provider)
+            .with_context(|| format!("Unknown extension provider '{}'", provider))?
+            .get_extension_versions(
+                match type_ {
+                    ExtensionType::Mod => minecraftd_manifest::ExtensionType::Mod,
+                    ExtensionType::Plugin => minecraftd_manifest::ExtensionType::Plugin,
+                },
+                server_version,
+                extension_id,
+                include_incompatible_versions,
+            )
+            .await?
+            .into_iter()
+            .map(|v| ExtensionVersionInfo {
+                id: v.id,
+                version: v.version,
+                is_stable: v.is_stable,
+            })
+            .collect())
     }
 
     async fn add_extension(
@@ -313,13 +318,20 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
     }
 
     async fn get_extension_id_by_url(url: &str) -> anyhow::Result<GetExtensionIdByUrlResponse> {
-        let (provider, info) = server::get_extension_info_by_url(url).await?;
+        for provider in EXTENSION_PROVIDERS.iter() {
+            if let Ok(info) = provider.get_extension_info_by_url(url).await {
+                return Ok(GetExtensionIdByUrlResponse {
+                    provider: provider.name().to_string(),
+                    r#type: match info.type_ {
+                        minecraftd_manifest::ExtensionType::Mod => ExtensionType::Mod,
+                        minecraftd_manifest::ExtensionType::Plugin => ExtensionType::Plugin,
+                    } as i32,
+                    extension_id: info.id,
+                });
+            }
+        }
 
-        Ok(GetExtensionIdByUrlResponse {
-            r#type: info.type_ as i32,
-            provider: provider.to_string(),
-            extension_id: info.id,
-        })
+        Err(anyhow::anyhow!("No extension provider recognized the URL"))
     }
 
     async fn get_metrics(
@@ -332,12 +344,14 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> anyhow::Result<GetMetricsResponse> {
-        let data_points = server::runner::query_metrics(
-            server_dir,
+        let manifest = ServerManifest::load(server_dir).await?;
+
+        let query = MetricsQuery {
+            server_id: manifest.id,
             metric,
             start_timestamp,
             end_timestamp,
-            match aggregation {
+            aggregation: match aggregation {
                 Aggregation::None => tsink::Aggregation::None,
                 Aggregation::Min => tsink::Aggregation::Min,
                 Aggregation::Max => tsink::Aggregation::Max,
@@ -346,10 +360,11 @@ impl mcctl_protocol::server::RequestHandler<anyhow::Error, TerminalReader, Termi
                 Aggregation::Last => tsink::Aggregation::Last,
             },
             downsample_interval,
-            limit,
-            offset,
-        )
-        .await?;
+            limit: limit.map(|l| l as usize),
+            offset: offset.map(|o| o as usize),
+        };
+
+        let data_points = metrics::query(query).await?;
 
         Ok(GetMetricsResponse {
             data_points: data_points

@@ -6,7 +6,7 @@ use std::{
 use minecraftd_manifest::Connection;
 use uuid::Uuid;
 
-use crate::server::runner::RunningServer;
+use crate::runner::RunningServer;
 
 pub struct RunningServers {
     servers: HashMap<Uuid, RunningServer>,

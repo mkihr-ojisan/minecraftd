@@ -1,10 +1,19 @@
 use crate::{config::init_config, lock::Lock};
 
 mod alert;
+mod auto_start;
+mod auto_update;
+mod bridge;
 mod config;
+mod extension;
+mod java_runtime;
 mod lock;
-mod port;
+mod metrics;
+mod port_pool;
+mod proxy_server;
+mod runner;
 mod server;
+mod server_implementations;
 mod socket;
 mod util;
 
@@ -26,20 +35,16 @@ async fn start() -> anyhow::Result<()> {
 
     init_config().await?;
 
-    port::init_port_pool();
-
-    tokio::spawn(async move {
-        if let Err(e) = server::proxy_server::start().await {
-            error!("Proxy server error: {e:?}");
-        }
-    });
-
-    server::runner::init_runner().await?;
-    server::auto_update::start();
+    port_pool::init();
+    metrics::init().await?;
+    proxy_server::init().await?;
+    runner::init().await?;
+    auto_update::init();
 
     socket::start_server().await?;
 
-    server::runner::shutdown().await;
+    runner::shutdown().await;
+    metrics::shutdown().await;
 
     Ok(())
 }
