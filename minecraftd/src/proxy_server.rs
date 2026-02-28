@@ -172,7 +172,7 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
                 raw_packet_stream
                     .write_packet(
                         &Packet::Disconnect {
-                            reason: TextComponent::String($message),
+                            reason: $message,
                         }
                         .to_raw_packet(),
                     )
@@ -190,7 +190,7 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
 
     let proxy_server = PROXY_SERVER.lock().await;
     let Some(&server_id) = proxy_server.hostname_to_server_id.get(&server_address) else {
-        send_error_message!("Server is not running or does not exist".to_string());
+        send_error_message!(get_config().messages.server_not_found.clone());
     };
 
     let server = proxy_server
@@ -203,23 +203,23 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
 
     match runner::get_server_status(server_id).await {
         Some(ServerStatus::Starting { restarting: false }) => {
-            send_error_message!("Server is starting up, please try again later".to_string());
+            send_error_message!(get_config().messages.server_starting.clone());
         }
         Some(ServerStatus::Ready) => {
             // proceed to connect
         }
         Some(ServerStatus::Stopping { restarting: false }) => {
-            send_error_message!("Server is stopping.".to_string());
+            send_error_message!(get_config().messages.server_stopping.clone());
         }
         Some(
             ServerStatus::Starting { restarting: true }
             | ServerStatus::Stopping { restarting: true },
         ) => {
-            send_error_message!("Server is restarting, please try again later".to_string());
+            send_error_message!(get_config().messages.server_restarting.clone());
         }
         Some(ServerStatus::Stopped) => unreachable!(),
         None => {
-            send_error_message!("Server is not running or does not exist".to_string());
+            send_error_message!(get_config().messages.server_not_found.clone());
         }
     }
 
@@ -275,7 +275,7 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
 
 async fn fallback_server_list_ping_server<S: AsyncRead + AsyncWrite + Unpin>(
     socket: &mut RawPacketStream<S>,
-    error_message: String,
+    error_message: TextComponent,
 ) -> anyhow::Result<()> {
     loop {
         let packet = match socket.read_packet().await {
@@ -301,7 +301,7 @@ async fn fallback_server_list_ping_server<S: AsyncRead + AsyncWrite + Unpin>(
                             protocol: 0,
                         },
                         players: None,
-                        description: Some(TextComponent::String(error_message.clone())),
+                        description: Some(error_message.clone()),
                         favicon: None,
                         modinfo: None,
                         forge_data: None,

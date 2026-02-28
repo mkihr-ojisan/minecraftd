@@ -10,6 +10,7 @@ bridge-protocol = { version = "0.1.0", path = "../bridge-protocol" }
 bytes = "1.11.1"
 cached = { version = "0.56.0", features = ["async"] }
 dirs = "6.0.0"
+duration-str = "0.20.0"
 fs2 = "0.4.3"
 hex = "0.4.3"
 log = "0.4.29"

@@ -19,6 +19,7 @@ use crate::{
     alert::{Alert, Severity, send_alert},
     auto_start::{add_auto_start_server, get_auto_start_servers, remove_auto_start_server},
     bridge::Bridge,
+    config::get_config,
     extension::{self, cache::get_extension_symlink_info, providers::get_extension_provider},
     java_runtime::JavaRuntimeExt,
     port_pool::Port,
@@ -41,7 +42,6 @@ mod metrics;
 mod running_servers;
 mod terminal;
 
-const STOP_TIMEOUT_SECS: u64 = 180;
 const MINECRAFT_DEFAULT_PORT: u16 = 25565;
 const PTY_DEFAULT_ROWS: u16 = 24;
 const PTY_DEFAULT_COLS: u16 = 80;
@@ -905,13 +905,14 @@ async fn do_stop_server(id: Uuid, restarting: bool) -> anyhow::Result<()> {
 
     let wait = wait_for_server_status(id, ServerStatus::Stopped);
 
-    match timeout(Duration::from_secs(STOP_TIMEOUT_SECS), wait).await {
+    let stop_timeout = get_config().runner.stop_timeout;
+    match timeout(stop_timeout, wait).await {
         Ok(_) => {
             debug!("Server stopped successfully");
             Ok(())
         }
         Err(_) => {
-            warn!("Server did not stop within {STOP_TIMEOUT_SECS} seconds, killing it");
+            warn!("Server did not stop, killing it");
             do_kill_server(id).await
         }
     }
@@ -932,7 +933,10 @@ async fn request_server_stop(
 
             if restarting {
                 client
-                    .execute_command("kick @a The server is restarting. Please try connecting again after a while.")
+                    .execute_command(&format!(
+                        "kick @a {}",
+                        get_config().messages.server_restarting_kick
+                    ))
                     .await?;
             }
 

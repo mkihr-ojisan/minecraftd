@@ -1,20 +1,13 @@
-use std::time::Duration;
-
-use minecraft_protocol::text_component::{Color, Object, TextComponent};
 use tokio::task::JoinSet;
 
 use crate::{
-    extension::providers::get_extension_provider, runner,
+    config::get_config, extension::providers::get_extension_provider, runner,
     server_implementations::get_server_implementation,
 };
 
-const UPDATE_CHECK_INTERVAL: Duration = Duration::from_hours(24);
-const WAIT_UNTIL_ALL_PLAYERS_LOG_OUT_TIMEOUT: Duration = Duration::from_hours(1);
-const NOTIFY_PLAYERS_BEFORE_RESTART_INTERVAL_MINUTES: u64 = 1;
-
 pub fn init() {
     tokio::spawn(async {
-        let mut interval = tokio::time::interval(UPDATE_CHECK_INTERVAL);
+        let mut interval = tokio::time::interval(get_config().auto_update.update_check_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
@@ -94,26 +87,22 @@ async fn do_auto_update() -> anyhow::Result<()> {
         join_set.spawn(async move {
             let result: anyhow::Result<()> = async move {
                 if tokio::time::timeout(
-                    WAIT_UNTIL_ALL_PLAYERS_LOG_OUT_TIMEOUT,
+                    get_config()
+                        .auto_update
+                        .wait_until_all_players_log_out_timeout,
                     runner::wait_until_all_players_log_out(id),
                 )
-                .await.is_err() {
-                    let message = TextComponent::Object(Object {
-                        text: Some("".to_string()),
-                        extra: Some(vec![
-                            TextComponent::Object(Object {
-                                text: Some("=== SERVER RESTART ===".to_string()),
-                                color: Some(Color::Red),
-                                ..Default::default()
-                            }),
-                            TextComponent::String(format!(
-                            "\nServer will restart in {} minute(s) to apply updates.\nPlease log out to avoid interruption.",
-                            NOTIFY_PLAYERS_BEFORE_RESTART_INTERVAL_MINUTES
-                        ))]),
-                        ..Default::default()
-                    });
+                .await
+                .is_err()
+                {
+                    let message = get_config().messages.server_restarting_for_update.clone();
                     runner::tellraw(id, "@a", message).await?;
-                    tokio::time::sleep(Duration::from_mins(NOTIFY_PLAYERS_BEFORE_RESTART_INTERVAL_MINUTES)).await;
+                    tokio::time::sleep(
+                        get_config()
+                            .auto_update
+                            .notify_players_before_restart_interval,
+                    )
+                    .await;
                 }
                 runner::restart_server(&server_dir).await?;
                 Ok(())

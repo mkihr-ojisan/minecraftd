@@ -1,7 +1,7 @@
 use std::{
     path::PathBuf,
     sync::{Arc, OnceLock},
-    time::{Duration, SystemTime},
+    time::SystemTime,
     vec,
 };
 
@@ -15,11 +15,7 @@ use tsink::{
 };
 use uuid::Uuid;
 
-use crate::util::BoxedFuture;
-
-const METRICS_COLLECTION_INTERVAL: Duration = Duration::from_secs(1);
-const METRICS_STORAGE_PARTITION_DURATION: Duration = Duration::from_secs(3600 * 24);
-const METRICS_STORAGE_RETENTION: Duration = Duration::from_secs(3600 * 24 * 30);
+use crate::{config::get_config, util::BoxedFuture};
 
 static METRICS_MANAGER: OnceLock<Mutex<MetricsManager>> = OnceLock::new();
 
@@ -77,8 +73,8 @@ pub async fn init() -> anyhow::Result<()> {
     let storage = tokio::task::spawn_blocking(|| {
         StorageBuilder::new()
             .with_data_path(metrics_storage_path()?)
-            .with_partition_duration(METRICS_STORAGE_PARTITION_DURATION)
-            .with_retention(METRICS_STORAGE_RETENTION)
+            .with_partition_duration(get_config().metrics.storage_partition_duration)
+            .with_retention(get_config().metrics.storage_retention)
             .with_timestamp_precision(tsink::TimestampPrecision::Seconds)
             .build()
             .context("Failed to initialize metrics storage")
@@ -95,7 +91,7 @@ pub async fn init() -> anyhow::Result<()> {
         .expect("init_metrics called multiple times");
 
     tokio::spawn(async {
-        let mut interval = tokio::time::interval(METRICS_COLLECTION_INTERVAL);
+        let mut interval = tokio::time::interval(get_config().metrics.collection_interval);
         interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
             interval.tick().await;

@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::{fmt::Display, io::Write};
 
 use serde::{Deserialize, Serialize};
 
@@ -324,5 +324,22 @@ impl TextComponent {
         write!(w, "{}\x1b[0m", str)?;
 
         Ok(())
+    }
+}
+
+impl Display for TextComponent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TextComponent::String(str) => write!(f, "{}", str),
+            TextComponent::Object(obj) => {
+                write!(f, "{}", obj.text.as_deref().unwrap_or_default())?;
+                if let Some(extra) = &obj.extra {
+                    for extra in extra {
+                        write!(f, "{}", extra)?;
+                    }
+                }
+                Ok(())
+            }
+        }
     }
 }
