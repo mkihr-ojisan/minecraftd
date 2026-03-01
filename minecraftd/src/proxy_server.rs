@@ -5,7 +5,7 @@ use std::{
         Arc, LazyLock,
         atomic::{AtomicU64, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, bail};
@@ -26,8 +26,9 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::{
+    alert::Severity,
     config::get_config,
-    metrics::{self, MetricsCollector, MetricsCollectorContext},
+    metrics::{self, AlertCondition, AlertRule, MetricsCollector, MetricsCollectorContext},
     runner::{self, ServerStatus},
     util::BoxedFuture,
 };
@@ -416,5 +417,44 @@ impl MetricsCollector for ProxyMetricsCollector {
             self.last_stats = current_values;
             Ok(())
         })
+    }
+
+    fn alert_rules(&self) -> &'static [AlertRule] {
+        &[
+            AlertRule {
+                metric: "proxy_received_bytes_per_second",
+                condition: AlertCondition::GreaterThan {
+                    threshold: 1024.0 * 1024.0 * 10.0,
+                },
+                duration: const { Duration::from_secs(60) },
+                alert_type: "high_proxy_incoming_traffic",
+                alert_severity: Severity::Warning,
+                alert_title: "High Incoming Traffic",
+                alert_message: |ctx| {
+                    format!(
+                        "Server at `{}` is receiving {:.2} MiB/s from clients, which exceeds the threshold of 10.00 MiB/s",
+                        ctx.server_dir.display(),
+                        ctx.value / (1024.0 * 1024.0)
+                    )
+                },
+            },
+            AlertRule {
+                metric: "proxy_sent_bytes_per_second",
+                condition: AlertCondition::GreaterThan {
+                    threshold: 1024.0 * 1024.0 * 10.0,
+                },
+                duration: const { Duration::from_secs(60) },
+                alert_type: "high_proxy_outgoing_traffic",
+                alert_severity: Severity::Warning,
+                alert_title: "High Outgoing Traffic",
+                alert_message: |ctx| {
+                    format!(
+                        "Server at `{}` is sending {:.2} MiB/s to clients, which exceeds the threshold of 10.00 MiB/s",
+                        ctx.server_dir.display(),
+                        ctx.value / (1024.0 * 1024.0)
+                    )
+                },
+            },
+        ]
     }
 }

@@ -1,9 +1,10 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
 
 use crate::{
-    metrics::{self, MetricsCollector, MetricsCollectorContext},
+    alert::Severity,
+    metrics::{self, AlertCondition, AlertRule, MetricsCollector, MetricsCollectorContext},
     runner::RUNNER,
     util::BoxedFuture,
 };
@@ -96,6 +97,41 @@ impl MetricsCollector for BridgeMetricsCollector {
             Ok(())
         })
     }
+
+    fn alert_rules(&self) -> &'static [AlertRule] {
+        &[
+            AlertRule {
+                metric: "tps",
+                condition: AlertCondition::LessThan { threshold: 18.0 },
+                duration: const { Duration::from_secs(60) },
+                alert_type: "low_tps",
+                alert_severity: Severity::Warning,
+                alert_title: "Low TPS",
+                alert_message: |ctx| {
+                    format!(
+                        "Server at `{}` has low TPS of {:.2}, which is below the threshold of 18.00",
+                        ctx.server_dir.display(),
+                        ctx.value
+                    )
+                },
+            },
+            AlertRule {
+                metric: "mspt",
+                condition: AlertCondition::GreaterThan { threshold: 40.0 },
+                duration: const { Duration::from_secs(60) },
+                alert_type: "high_mspt",
+                alert_severity: Severity::Warning,
+                alert_title: "High MSPT",
+                alert_message: |ctx| {
+                    format!(
+                        "Server at `{}` has high MSPT of {:.2}, which is above the threshold of 40.00",
+                        ctx.server_dir.display(),
+                        ctx.value
+                    )
+                },
+            },
+        ]
+    }
 }
 
 #[derive(Default)]
@@ -146,5 +182,23 @@ impl MetricsCollector for SystemMetricsCollector {
 
             Ok(())
         })
+    }
+
+    fn alert_rules(&self) -> &'static [AlertRule] {
+        &[AlertRule {
+            metric: "cpu_usage_percent",
+            condition: AlertCondition::GreaterThan { threshold: 80.0 },
+            duration: const { Duration::from_secs(60) },
+            alert_type: "high_cpu_usage",
+            alert_severity: Severity::Warning,
+            alert_title: "High CPU Usage",
+            alert_message: |ctx| {
+                format!(
+                    "Server at `{}` has high CPU usage of {:.2}%, which is above the threshold of 80.00%",
+                    ctx.server_dir.display(),
+                    ctx.value
+                )
+            },
+        }]
     }
 }

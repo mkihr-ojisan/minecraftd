@@ -1,7 +1,8 @@
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{Arc, OnceLock},
-    time::SystemTime,
+    time::{Duration, SystemTime},
     vec,
 };
 
@@ -15,13 +16,25 @@ use tsink::{
 };
 use uuid::Uuid;
 
-use crate::{config::get_config, util::BoxedFuture};
+use crate::{
+    alert::{self, Alert, Severity},
+    config::get_config,
+    runner,
+    util::BoxedFuture,
+};
 
 static METRICS_MANAGER: OnceLock<Mutex<MetricsManager>> = OnceLock::new();
 
 struct MetricsManager {
     storage: Arc<dyn Storage>,
     metrics_collectors: Vec<Box<dyn MetricsCollector>>,
+    alert_rules: HashMap<&'static str, AlertRuleEntry>, // key: metric name
+}
+
+struct AlertRuleEntry {
+    rule: &'static AlertRule,
+    condition_met_since: Option<SystemTime>,
+    alert_sent: bool,
 }
 
 pub trait MetricsCollector: Send + Sync + 'static {
@@ -30,27 +43,51 @@ pub trait MetricsCollector: Send + Sync + 'static {
         &'a mut self,
         ctx: &'a mut MetricsCollectorContext,
     ) -> BoxedFuture<'a, anyhow::Result<()>>;
+    fn alert_rules(&self) -> &'static [AlertRule] {
+        &[]
+    }
 }
 
 #[derive(Default)]
 pub struct MetricsCollectorContext {
-    rows: Vec<Row>,
+    metrics: Vec<MetricEntry>,
+}
+
+struct MetricEntry {
+    server_id: Uuid,
+    metric: String,
+    timestamp: SystemTime,
+    value: f64,
+}
+
+pub struct AlertRule {
+    pub metric: &'static str,
+    pub condition: AlertCondition,
+    pub duration: Duration,
+    pub alert_type: &'static str,
+    pub alert_severity: Severity,
+    pub alert_title: &'static str,
+    pub alert_message: fn(&MetricAlertContext) -> String,
+}
+
+pub enum AlertCondition {
+    GreaterThan { threshold: f64 },
+    LessThan { threshold: f64 },
+}
+
+pub struct MetricAlertContext {
+    pub server_dir: PathBuf,
+    pub value: f64,
 }
 
 impl MetricsCollectorContext {
     pub fn push_metric(&mut self, server_id: Uuid, metric: &str, timestamp: SystemTime, data: f64) {
-        let row = Row::with_labels(
-            metric,
-            vec![Label::new("server_id", server_id.to_string())],
-            DataPoint::new(
-                timestamp
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64,
-                data,
-            ),
-        );
-        self.rows.push(row);
+        self.metrics.push(MetricEntry {
+            server_id,
+            metric: metric.to_string(),
+            timestamp,
+            value: data,
+        });
     }
 }
 
@@ -86,6 +123,7 @@ pub async fn init() -> anyhow::Result<()> {
         .set(Mutex::new(MetricsManager {
             storage,
             metrics_collectors: Vec::new(),
+            alert_rules: HashMap::new(),
         }))
         .ok()
         .expect("init_metrics called multiple times");
@@ -115,10 +153,71 @@ async fn collect_metrics() {
         }
     }
 
-    if let Err(err) =
-        tokio::task::spawn_blocking(move || manager.storage.insert_rows(&context.rows))
-            .await
-            .unwrap()
+    for metric in &context.metrics {
+        if let Some(alert_rule_entry) = manager.alert_rules.get_mut(&*metric.metric) {
+            let condition_met = match alert_rule_entry.rule.condition {
+                AlertCondition::GreaterThan { threshold } => metric.value > threshold,
+                AlertCondition::LessThan { threshold } => metric.value < threshold,
+            };
+
+            if condition_met {
+                if let Some(since) = alert_rule_entry.condition_met_since
+                    && let Ok(elapsed) = metric.timestamp.duration_since(since)
+                {
+                    if elapsed >= alert_rule_entry.rule.duration && !alert_rule_entry.alert_sent {
+                        // Trigger alert
+                        let Some(server_dir) = runner::get_server_dir(metric.server_id).await
+                        else {
+                            continue; // server stopped
+                        };
+                        let alert_context = MetricAlertContext {
+                            server_dir,
+                            value: metric.value,
+                        };
+                        let message = (alert_rule_entry.rule.alert_message)(&alert_context);
+
+                        alert::send_alert(alert_rule_entry.rule.alert_type, || Alert {
+                            title: alert_rule_entry.rule.alert_title.to_string(),
+                            message,
+                            severity: alert_rule_entry.rule.alert_severity,
+                        })
+                        .await;
+
+                        alert_rule_entry.alert_sent = true;
+                    }
+                } else {
+                    alert_rule_entry.condition_met_since = Some(metric.timestamp);
+                    alert_rule_entry.alert_sent = false;
+                }
+            } else {
+                alert_rule_entry.condition_met_since = None;
+                alert_rule_entry.alert_sent = false;
+            }
+        }
+    }
+
+    let rows = context
+        .metrics
+        .into_iter()
+        .map(|entry| {
+            Row::with_labels(
+                entry.metric,
+                vec![Label::new("server_id", entry.server_id.to_string())],
+                DataPoint {
+                    value: entry.value,
+                    timestamp: entry
+                        .timestamp
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if let Err(err) = tokio::task::spawn_blocking(move || manager.storage.insert_rows(&rows))
+        .await
+        .unwrap()
     {
         error!("Failed to insert metrics into storage: {:?}", err);
     }
@@ -126,6 +225,16 @@ async fn collect_metrics() {
 
 pub async fn register_metrics_collector(collector: impl MetricsCollector) {
     let mut manager = get_metrics_manager().await;
+    for alert_rule in collector.alert_rules() {
+        manager.alert_rules.insert(
+            alert_rule.metric,
+            AlertRuleEntry {
+                rule: alert_rule,
+                condition_met_since: None,
+                alert_sent: false,
+            },
+        );
+    }
     manager.metrics_collectors.push(Box::new(collector));
 }
 

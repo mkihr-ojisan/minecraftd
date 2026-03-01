@@ -5,12 +5,14 @@ use crate::{
 
 static CLIENT: LazyInitHttpClient = LazyInitHttpClient::new();
 
+#[derive(Debug, Clone)]
 pub struct Alert {
     pub severity: Severity,
     pub title: String,
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Info,
     Warning,
