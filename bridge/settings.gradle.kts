@@ -15,6 +15,7 @@ pluginManagement {
     repositories {
         gradlePluginPortal()
         maven("https://maven.kikugie.dev/snapshots") { name = "KikuGie Snapshots" }
+        maven("https://maven.fabricmc.net/") { name = "Fabric" }
     }
 }
 
@@ -32,6 +33,16 @@ stonecutter {
         }
         branch("forge") {
             versions(
+                "1.18.2",
+                "1.19.2",
+                "1.20.1",
+                "1.21.1",
+                "1.21.11",
+            )
+        }
+        branch("fabric") {
+            versions(
+                "1.16.5",
                 "1.18.2",
                 "1.19.2",
                 "1.20.1",

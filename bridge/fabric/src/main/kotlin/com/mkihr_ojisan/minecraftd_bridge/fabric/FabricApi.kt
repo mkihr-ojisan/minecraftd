@@ -1,14 +1,10 @@
-package com.mkihr_ojisan.minecraftd_bridge.forge
+package com.mkihr_ojisan.minecraftd_bridge.fabric
 
 import com.mkihr_ojisan.minecraftd_bridge.common.Api
 import net.minecraft.server.MinecraftServer
-import org.apache.logging.log4j.Logger
 import java.util.concurrent.CompletableFuture
 
-class ForgeApi(
-    private val logger: Logger,
-    private val server: MinecraftServer
-) : Api {
+class FabricApi(private val server: MinecraftServer) : Api {
     private val tps = Tps()
 
     override fun <T> runOnMainThread(task: () -> T): T {
@@ -24,11 +20,11 @@ class ForgeApi(
     }
 
     override fun logError(message: String) {
-        logger.error(message)
+        BridgeMod.logger.error(message)
     }
 
     override fun logInfo(message: String) {
-        logger.info(message)
+        BridgeMod.logger.info(message)
     }
 
     override fun getTPS(): Double? {

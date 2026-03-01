@@ -1,13 +1,6 @@
-package com.mkihr_ojisan.minecraftd_bridge.forge
+package com.mkihr_ojisan.minecraftd_bridge.fabric
 
-import net.minecraftforge.common.MinecraftForge
-import net.minecraftforge.event.TickEvent
-
-//? if >=1.21.11 {
-import net.minecraftforge.eventbus.api.listener.SubscribeEvent
-
-//?} else
-//import net.minecraftforge.eventbus.api.SubscribeEvent
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
 
 private const val HISTORY_SIZE = 100
 
@@ -18,29 +11,9 @@ class Tps {
     private var lastTickStartTime = 0L
 
     init {
-        MinecraftForge.EVENT_BUS.register(this)
+        ServerTickEvents.START_SERVER_TICK.register { handleTickStart() }
+        ServerTickEvents.END_SERVER_TICK.register { handleTickEnd() }
     }
-
-    //? if >=1.20.6 {
-    @SubscribeEvent
-    fun onServerTickStart(event: TickEvent.ServerTickEvent.Pre) {
-        handleTickStart()
-    }
-
-    @SubscribeEvent
-    fun onServerTickEnd(event: TickEvent.ServerTickEvent.Post) {
-        handleTickEnd()
-    }
-
-    //? } else {
-    /*@SubscribeEvent
-    fun onServerTick(event: TickEvent.ServerTickEvent) {
-        when (event.phase) {
-            TickEvent.Phase.START -> handleTickStart()
-            TickEvent.Phase.END -> handleTickEnd()
-        }
-    }
-    *///? }
 
     private fun handleTickStart() {
         lastTickStartTime = System.nanoTime()

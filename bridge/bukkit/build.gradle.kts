@@ -7,7 +7,6 @@ plugins {
 }
 
 val minecraftVersion = sc.current.version
-val forgeVersion = forgeVersion(minecraftVersion)
 val javaVersion = javaVersion(minecraftVersion)
 val kotlinJvmTarget = jvmTarget(minecraftVersion)
 
@@ -29,7 +28,7 @@ repositories {
 }
 
 dependencies {
-    compileOnly("com.destroystokyo.paper:paper-api:1.16.5-R0.1-20211218.082619-371")
+    implementation("com.destroystokyo.paper:paper-api:1.16.5-R0.1-20211218.082619-371")
 }
 
 spigot {

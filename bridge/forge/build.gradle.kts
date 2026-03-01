@@ -32,5 +32,5 @@ repositories {
 }
 
 dependencies {
-    compileOnly(minecraft.dependency("net.minecraftforge:forge:${minecraftVersion}-${forgeVersion}"))
+    implementation(minecraft.dependency("net.minecraftforge:forge:${minecraftVersion}-${forgeVersion}"))
 }
