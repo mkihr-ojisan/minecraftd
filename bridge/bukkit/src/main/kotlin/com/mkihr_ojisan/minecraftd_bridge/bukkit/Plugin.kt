@@ -16,9 +16,7 @@ class Plugin : JavaPlugin() {
         socketServer = SocketServer(api)
         requestHandler = RequestHandler(api)
 
-        thread {
-            socketServer.start(requestHandler)
-        }
+        socketServer.start(requestHandler)
     }
 
     override fun onDisable() {

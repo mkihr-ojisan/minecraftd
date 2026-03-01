@@ -1,8 +1,8 @@
 package com.mkihr_ojisan.minecraftd_bridge.common
 
-import com.mkihr_ojisan.minecraftd.bridge.common.protocol.Protocol.Request
-import com.mkihr_ojisan.minecraftd.bridge.common.protocol.getServerMetricsResponse
-import com.mkihr_ojisan.minecraftd.bridge.common.protocol.response
+import com.mkihr_ojisan.minecraftd_bridge.common.protocol.Protocol.Request
+import com.mkihr_ojisan.minecraftd_bridge.common.protocol.getServerMetricsResponse
+import com.mkihr_ojisan.minecraftd_bridge.common.protocol.response
 import org.newsclub.net.unix.AFUNIXServerSocket
 import java.io.File
 import org.newsclub.net.unix.AFUNIXSocketAddress
@@ -15,8 +15,6 @@ class SocketServer(private val api: Api): Closeable {
     private val sock = AFUNIXServerSocket.newInstance()
     val socketFile = File("minecraftd.sock")
 
-    private var thread: Thread? = null
-
     fun start(requestHandler: RequestHandler) {
         if (socketFile.exists()) {
             socketFile.delete()
@@ -26,10 +24,10 @@ class SocketServer(private val api: Api): Closeable {
 
         api.logInfo("Socket server started at ${socketFile.absolutePath}")
 
-        this.thread = thread {
+        thread(name = "minecraftd_bridge_socket", isDaemon = true) {
             while (true) {
                 val client = sock.accept()
-                thread {
+                thread(name = "minecraftd_bridge_client_${client.remoteSocketAddress}", isDaemon = true) {
                     try {
                         val input = DataInputStream(client.inputStream)
                         val output = DataOutputStream(client.outputStream)
@@ -70,7 +68,7 @@ class SocketServer(private val api: Api): Closeable {
     }
 
     override fun close() {
-        thread?.interrupt()
+        sock.close()
         socketFile.delete()
     }
 }

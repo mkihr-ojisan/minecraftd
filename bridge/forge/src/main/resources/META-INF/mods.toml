@@ -1,0 +1,9 @@
+modLoader="javafml"
+loaderVersion="[0,)"
+license="MIT"
+
+[[mods]]
+modId="minecraftd_bridge"
+version="1.0.0"
+displayName="minecraftd bridge"
+authors="mkihr-ojisan" #optional

@@ -1,6 +1,6 @@
 package com.mkihr_ojisan.minecraftd_bridge.common
 
-import com.mkihr_ojisan.minecraftd.bridge.common.protocol.*
+import com.mkihr_ojisan.minecraftd_bridge.common.protocol.*
 
 class RequestHandler(private val api: Api) {
     fun getServerMetrics(): Protocol.ServerMetrics {

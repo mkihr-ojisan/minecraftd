@@ -1,9 +1,8 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
     id("common-conventions")
-    id("io.typst.spigradle.spigot") version "4.0.0"
+    id("net.minecraftforge.gradle") version "[7.0.3,8)"
 }
 
 val minecraftVersion = sc.current.version
@@ -22,18 +21,16 @@ tasks.withType<KotlinCompile>().configureEach {
     }
 }
 
+minecraft {
+    mappings("official", sc.current.version)
+}
+
 repositories {
-    spigotRepos {
-        papermc()
-    }
+    minecraft.mavenizer(this)
+    maven(fg.forgeMaven)
+    maven(fg.minecraftLibsMaven)
 }
 
 dependencies {
-    compileOnly("com.destroystokyo.paper:paper-api:1.16.5-R0.1-20211218.082619-371")
-}
-
-spigot {
-    name = "minecraftd-bridge"
-    apiVersion = minecraftVersion
-    main = "com.mkihr_ojisan.minecraftd_bridge.bukkit.Plugin"
+    compileOnly(minecraft.dependency("net.minecraftforge:forge:${minecraftVersion}-${forgeVersion}"))
 }

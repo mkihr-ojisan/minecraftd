@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package com.mkihr_ojisan.minecraftd.bridge.common.protocol;
+package com.mkihr_ojisan.minecraftd_bridge.common.protocol;
 
 message Request {
     oneof payload {
