@@ -29,7 +29,10 @@ stonecutter {
             versions("all")
         }
         branch("bukkit") {
-            versions("1.7")
+            versions(
+                "1.7",
+                "1.13",
+            )
         }
         branch("forge") {
             versions(
