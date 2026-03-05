@@ -8,13 +8,20 @@
 ## Key Features
 
 - Create servers (Vanilla / Paper)
-  - Auto-download server jars
+  - Auto-download/cache server jars
 - Start / stop / restart / kill
   - Stop is done via RCON (`stop`) when possible
 - Attach to the console (via PTY)
   - `mcctl attach` connects to the server’s stdio
 - List running servers (`mcctl ps`)
   - Queries player counts via Server List Ping for servers in the Ready state
+- Manage mods/plugins
+  - `mcctl extensions add` adds mods/plugins and their dependencies
+  - Optional auto-update for each extension
+- Server auto-update
+  - Periodically checks for updates and restarts when safe
+- Built-in metrics collection + TUI
+  - `mcctl stats` shows charts for TPS/MSPT/memory/CPU/player count/etc
 - Optional proxy mode
   - Built-in TCP proxy routes by the hostname in the Minecraft handshake (“server address”)
   - Example: connect to `a.example.test` for server A, `b.example.test` for server B
@@ -65,8 +72,6 @@ Type=simple
 ExecStart=%h/.local/bin/minecraftd
 # Optional: default logging verbosity
 Environment=RUST_LOG=info
-# Optional: pass daemon flags here (example)
-# ExecStart=%h/.local/bin/minecraftd --port-min 30001 --port-max 30100 --proxy-server-bind-address 0.0.0.0:25565
 
 Restart=on-failure
 RestartSec=2
@@ -129,26 +134,18 @@ If you installed `minecraftd` to your `PATH`:
 RUST_LOG=info minecraftd
 ```
 
-For up-to-date daemon options, run `minecraftd --help`. Common options:
-
-- `--port-min` (default `30001`)
-- `--port-max` (default `30100`)
-  - Used to allocate backend ports for proxy mode and RCON ports
-- `--proxy-server-bind-address` (default `0.0.0.0:25565`)
-  - The public entrypoint for Minecraft clients (the proxy listener)
-
 ### 2) Create a server
 
 Example: create a Paper server in a directory:
 
 ```bash
-mcctl create ~/mc/servers/paper-1
+mcctl create -d ~/mc/servers/paper-1
 ```
 
 Common options:
 
 - `--name` (display name)
-- `--server-implementation` (`vanilla` or `paper`)
+- `--server-implementation` (`vanilla`, `paper`, or `custom`)
 - `--version` (e.g., `1.21.11`)
 - `--build` (Paper build number, e.g., `123`)
 - `--connection` (`direct` or `proxy`)
@@ -166,22 +163,26 @@ If you want to run multiple servers at once, `proxy` is usually the easiest opti
 ### 3) Start / stop
 
 ```bash
-mcctl start ~/mc/servers/paper-1
+mcctl start -d ~/mc/servers/paper-1
 mcctl ps
-mcctl stop ~/mc/servers/paper-1
+mcctl stop -d ~/mc/servers/paper-1
 ```
 
 Restart / kill:
 
 ```bash
-mcctl restart ~/mc/servers/paper-1
-mcctl kill ~/mc/servers/paper-1
+mcctl restart -d ~/mc/servers/paper-1
+mcctl kill -d ~/mc/servers/paper-1
 ```
+
+Note:
+
+- On first start, `mcctl start` will prompt you to accept the Minecraft EULA and will write `eula.txt` into the server directory.
 
 ### 4) Attach to the console
 
 ```bash
-mcctl attach ~/mc/servers/paper-1
+mcctl attach -d ~/mc/servers/paper-1
 ```
 
 To detach from the console, press `Ctrl+C`.
@@ -195,7 +196,7 @@ Connect directly to the `server-port` in `server.properties`.
 #### For `proxy`
 
 In the Minecraft client, set the “Server Address” to the hostname you configured at creation time (`--hostname`).
-`minecraftd` listens on `--proxy-server-bind-address` (default `0.0.0.0:25565`) and forwards the connection to the correct backend based on that hostname.
+`minecraftd` listens on `proxy_server.bind_address` (default `0.0.0.0:25565`) and forwards the connection to the correct backend based on that hostname.
 
 For local testing, adding an `/etc/hosts` entry is convenient:
 
@@ -208,14 +209,18 @@ For local testing, adding an `/etc/hosts` entry is convenient:
 Update the server manifest to the latest stable version/build (downloads/caches the new server jar if needed):
 
 ```bash
-mcctl update ~/mc/servers/paper-1
+mcctl update -d ~/mc/servers/paper-1
 ```
 
 To update to the latest available (may include unstable/snapshots depending on implementation):
 
 ```bash
-mcctl update --update-type latest ~/mc/servers/paper-1
+mcctl update -d ~/mc/servers/paper-1 --update-type latest
 ```
+
+Note:
+
+- `mcctl update` requires the server to be stopped.
 
 ## Server Directory Layout
 
@@ -235,7 +240,7 @@ On startup, `server.properties` is created/updated with:
 `minecraftd.yaml` is YAML. Common fields:
 
 - `name`: display name
-- `server_implementation`: `vanilla` or `paper`
+- `server_implementation`: `vanilla`, `paper`, or `custom`
 - `version` / `build`: the chosen version/build
 - `command`: start command placeholders:
   - `${java}`: Java executable path
@@ -266,6 +271,8 @@ connection:
   hostname: paper-1.local
 auto_start: true
 restart_on_failure: true
+auto_update: false
+extensions: []
 ```
 
 Example (use a custom Java):
@@ -275,3 +282,81 @@ java_runtime:
   type: custom
   java_home: /usr/lib/jvm/temurin-21-jdk
 ```
+
+## Extensions (Mods / Plugins)
+
+Currently the only supported provider is Modrinth.
+
+Interactive add (search by keyword):
+
+```bash
+mcctl extensions add -d ~/mc/servers/paper-1
+```
+
+Add by URL (Modrinth URL):
+
+```bash
+mcctl extensions add -d ~/mc/servers/paper-1 https://modrinth.com/mod/sodium
+```
+
+Notes:
+
+- `--allow-incompatible-versions` lets you pick versions that don't match the server version.
+- If you enable extension auto-updates, the daemon will check and update them when server auto-update runs.
+
+## Server Auto-Update
+
+If `auto_update: true` is set in `minecraftd.yaml`, `minecraftd` periodically checks for:
+
+- newer server version/build (stable by default)
+- newer extension versions (for entries with `auto_update: true`)
+
+When an update is available, it waits for players to log out (up to a configured timeout) and then restarts the server.
+
+## Stats (`mcctl stats`)
+
+`minecraftd` collects metrics into local storage and `mcctl stats` shows them in a terminal UI:
+
+```bash
+mcctl stats -d ~/mc/servers/paper-1
+```
+
+Keys:
+
+- `q` or `Ctrl+C`: quit
+- `+` / `-`: change time scale
+- Arrow keys / PageUp / PageDown: scroll
+
+## Configuration (`config.yaml`)
+
+Config file path:
+
+- `$XDG_CONFIG_HOME/minecraftd/config.yaml` (typically `~/.config/minecraftd/config.yaml`)
+
+If the file is missing or invalid, defaults are used.
+
+Minimal example:
+
+```yaml
+port:
+  min: 30001
+  max: 30100
+proxy_server:
+  bind_address: "0.0.0.0:25565"
+```
+
+Common knobs (optional):
+
+- `auto_update.update_check_interval` (default: 24h)
+- `metrics.collection_interval` (default: 1s)
+- `metrics.storage_retention` (default: 30d)
+
+## Data Locations
+
+`minecraftd` stores caches and metrics under the XDG data directory:
+
+- `$XDG_DATA_HOME/minecraftd` (typically `~/.local/share/minecraftd`)
+  - `versions/`: cached server jars
+  - `runtimes/`: auto-downloaded Java runtimes
+  - `extensions/`: cached mods/plugins
+  - `metrics/`: time-series storage for `mcctl stats`
