@@ -37,4 +37,5 @@ tasks.processResources {
 
 tasks.remapJar {
     inputFile = tasks.shadowJar.flatMap { it.archiveFile }
+    archiveClassifier.set("remapped")
 }
