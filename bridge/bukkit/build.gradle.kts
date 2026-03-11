@@ -36,3 +36,13 @@ spigot {
     apiVersion = minecraftVersion
     main = "com.mkihr_ojisan.minecraftd_bridge.bukkit.Plugin"
 }
+
+tasks.shadowJar {
+    val versionMap = mapOf(
+        "1.7" to "1.7-1.12",
+        "1.13" to "1.13-1.21",
+    )
+
+    destinationDirectory.set(file("$rootDir/dist"))
+    archiveFileName.set("minecraftd-bridge-bukkit-${versionMap[minecraftVersion]}.jar")
+}

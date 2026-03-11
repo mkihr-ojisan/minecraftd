@@ -37,5 +37,6 @@ tasks.processResources {
 
 tasks.remapJar {
     inputFile = tasks.shadowJar.flatMap { it.archiveFile }
-    archiveClassifier.set("remapped")
+    destinationDirectory.set(file("$rootDir/dist"))
+    archiveFileName.set("minecraftd-bridge-fabric-${minecraftVersion}.jar")
 }

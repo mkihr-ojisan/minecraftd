@@ -34,3 +34,8 @@ repositories {
 dependencies {
     implementation(minecraft.dependency("net.minecraftforge:forge:${minecraftVersion}-${forgeVersion}"))
 }
+
+tasks.shadowJar {
+    destinationDirectory.set(file("$rootDir/dist"))
+    archiveFileName.set("minecraftd-bridge-forge-${minecraftVersion}.jar")
+}
