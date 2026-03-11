@@ -13,7 +13,6 @@ dependencies {
 
 tasks.shadowJar {
     configurations = listOf(shade)
-    exclude("META-INF")
 
     // PaperMC uses an older version of protobuf, so we need to relocate our protobuf dependency to avoid conflicts
     relocate("com.google.protobuf", "com.mkihr_ojisan.minecraftd_bridge.protobuf")
