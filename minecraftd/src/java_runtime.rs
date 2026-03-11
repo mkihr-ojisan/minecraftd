@@ -1,4 +1,4 @@
-use std::{borrow::Cow, path::PathBuf};
+use std::{borrow::Cow, io::Read, path::PathBuf};
 
 use anyhow::Context;
 use minecraftd_manifest::JavaRuntime;
@@ -118,9 +118,12 @@ impl JavaRuntimeExt for JavaRuntime {
                             }
 
                             let decompressed = if is_compressed {
-                                Cow::Owned(
-                                    lzma::decompress(&bytes).context("Failed to decompress")?,
-                                )
+                                let mut decompressed = Vec::with_capacity(size as usize);
+                                let mut reader =
+                                    lzma_rust2::LzmaReader::new_mem_limit(&*bytes, u32::MAX, None)
+                                        .unwrap();
+                                reader.read_to_end(&mut decompressed)?;
+                                Cow::Owned(decompressed)
                             } else {
                                 Cow::Borrowed(&*bytes)
                             };
