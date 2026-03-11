@@ -814,7 +814,7 @@ fn spawn_readiness_checker(id: Uuid, server_port: u16) {
         }
 
         while !is_ready!() {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
 
             if let Some(ServerStatus::Starting { .. }) = get_server_status(id).await {
             } else {
