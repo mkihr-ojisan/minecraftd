@@ -163,6 +163,9 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
         bail!("Expected handshake packet");
     };
 
+    // forge adds '\0FML3\0' to the end of the server address in the handshake packet, so we need to trim that off if it's present
+    let server_address = server_address.split('\0').next().unwrap();
+
     debug!(
         "Received handshake packet from client {peer_addr} with server address '{server_address}' and intent '{intent:?}'"
     );
@@ -190,7 +193,7 @@ async fn handle_client(socket: TcpStream) -> anyhow::Result<()> {
     }
 
     let proxy_server = PROXY_SERVER.lock().await;
-    let Some(&server_id) = proxy_server.hostname_to_server_id.get(&server_address) else {
+    let Some(&server_id) = proxy_server.hostname_to_server_id.get(server_address) else {
         send_error_message!(get_config().messages.server_not_found.clone());
     };
 
