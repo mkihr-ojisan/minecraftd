@@ -14,8 +14,10 @@ dependencies {
 tasks.shadowJar {
     configurations = listOf(shade)
 
-    // PaperMC uses an older version of protobuf, so we need to relocate our protobuf dependency to avoid conflicts
-    relocate("com.google.protobuf", "com.mkihr_ojisan.minecraftd_bridge.protobuf")
+    relocate("com.google.protobuf", "com.mkihr_ojisan.minecraftd_bridge.shaded.protobuf")
+    relocate("kotlin", "com.mkihr_ojisan.minecraftd_bridge.shaded.kotlin")
+    relocate("org.intellij", "com.mkihr_ojisan.minecraftd_bridge.shaded.intellij")
+    relocate("org.jetbrains", "com.mkihr_ojisan.minecraftd_bridge.shaded.jetbrains")
 }
 
 tasks.named("assemble") {
