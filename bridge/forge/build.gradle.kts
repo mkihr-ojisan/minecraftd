@@ -3,6 +3,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 plugins {
     id("common-conventions")
     id("net.minecraftforge.gradle") version "[7.0.3,8)"
+    id("net.minecraftforge.renamer") version "1.0.6"
 }
 
 val minecraftVersion = sc.current.version
@@ -35,7 +36,14 @@ dependencies {
     implementation(minecraft.dependency("net.minecraftforge:forge:${minecraftVersion}-${forgeVersion}"))
 }
 
-tasks.shadowJar {
-    destinationDirectory.set(file("$rootDir/dist"))
-    archiveFileName.set("minecraftd-bridge-forge-${minecraftVersion}.jar")
+if (sc.current.parsed >= "1.20.6") {
+    tasks.shadowJar {
+        destinationDirectory = file("$rootDir/dist")
+        archiveFileName.set("minecraftd-bridge-forge-${minecraftVersion}.jar")
+    }
+} else {
+    renamer.classes(tasks.shadowJar) {
+        map.from(minecraft.dependency.toSrgFile)
+        output = file("$rootDir/dist/minecraftd-bridge-forge-${minecraftVersion}.jar")
+    }
 }
