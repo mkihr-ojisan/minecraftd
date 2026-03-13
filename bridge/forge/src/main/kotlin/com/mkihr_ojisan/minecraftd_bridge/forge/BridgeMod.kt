@@ -3,8 +3,6 @@ package com.mkihr_ojisan.minecraftd_bridge.forge
 import com.mkihr_ojisan.minecraftd_bridge.common.RequestHandler
 import com.mkihr_ojisan.minecraftd_bridge.common.SocketServer
 import net.minecraftforge.common.MinecraftForge
-import net.minecraftforge.event.server.ServerStartedEvent
-import net.minecraftforge.event.server.ServerStoppingEvent
 import net.minecraftforge.fml.common.Mod
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext
 import org.apache.logging.log4j.LogManager
@@ -14,9 +12,17 @@ import org.apache.logging.log4j.LogManager
 //?} else
 //import net.minecraftforge.eventbus.api.SubscribeEvent
 
+//? if >= 1.18 {
+import net.minecraftforge.event.server.ServerStartedEvent
+import net.minecraftforge.event.server.ServerStoppingEvent
+//?} else {
+/*typealias ServerStartedEvent = net.minecraftforge.fml.event.server.FMLServerStartedEvent
+typealias ServerStoppingEvent = net.minecraftforge.fml.event.server.FMLServerStoppingEvent
+*///?}
+
 @Suppress("unused")
 @Mod(BridgeMod.MOD_ID)
-class BridgeMod(context: FMLJavaModLoadingContext) {
+class BridgeMod {
     companion object {
         const val MOD_ID = "minecraftd_bridge"
         val LOGGER = LogManager.getLogger("minecraftd_bridge")

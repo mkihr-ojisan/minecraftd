@@ -36,6 +36,7 @@ stonecutter {
         }
         branch("forge") {
             versions(
+                "1.16.5",
                 "1.18.2",
                 "1.19.2",
                 "1.20.1",
