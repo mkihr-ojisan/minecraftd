@@ -59,10 +59,11 @@ pub struct Mod1 {
 pub struct ForgeData {
     pub mods: Vec<Mod2>,
     #[serde(
+        default,
         serialize_with = "encode_forge_data_d",
         deserialize_with = "decode_forge_data_d"
     )]
-    pub d: ForgeDataD,
+    pub d: Option<ForgeDataD>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,14 +90,14 @@ pub enum Mod3Version {
     ServerOnly,
 }
 
-fn encode_forge_data_d<S>(_: &ForgeDataD, _: S) -> Result<S::Ok, S::Error>
+fn encode_forge_data_d<S>(_: &Option<ForgeDataD>, _: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
     unimplemented!()
 }
 
-fn decode_forge_data_d<'de, D>(deserializer: D) -> Result<ForgeDataD, D::Error>
+fn decode_forge_data_d<'de, D>(deserializer: D) -> Result<Option<ForgeDataD>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -164,7 +165,7 @@ where
         });
     }
 
-    Ok(ForgeDataD { mods })
+    Ok(Some(ForgeDataD { mods }))
 }
 
 impl StatusResponse {
@@ -178,14 +179,16 @@ impl StatusResponse {
                     .flat_map(|x| x.mods.iter().map(|x| (&*x.mod_id, &*x.modmarker))),
             )
             .chain(self.forge_data.iter().flat_map(|x| {
-                x.d.mods.iter().map(|x| {
-                    (
-                        &*x.mod_id,
-                        match &x.mod_version {
-                            Mod3Version::Version(x) => &**x,
-                            Mod3Version::ServerOnly => "server only",
-                        },
-                    )
+                x.d.iter().flat_map(|d| {
+                    d.mods.iter().map(|x| {
+                        (
+                            &*x.mod_id,
+                            match &x.mod_version {
+                                Mod3Version::Version(x) => &**x,
+                                Mod3Version::ServerOnly => "server only",
+                            },
+                        )
+                    })
                 })
             }))
     }
